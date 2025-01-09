@@ -4,7 +4,7 @@ This is a repository for different tools used in the UMUGUC project. This is by 
 
 ## Available Tools
 
-* Data Converter: 
+* ![Data Converter](./data_converter/README.md): 
     Converts data for the AHM hdf5 format to a generic UMUGUC (uncompressed) format. 
 
 * Visualizer: 
