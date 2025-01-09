@@ -1,0 +1,12 @@
+CMakeSettings.json
+compile_commands.json
+build
+build_*
+build-*
+install
+.cache/
+.vs/
+.vscode/
+.idea/
+/tags
+__pycache__/
