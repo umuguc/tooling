@@ -4,10 +4,9 @@ This is a repository for different tools used in the UMUGUC project. This is by 
 
 ## Available Tools
 
-* ![Data Converter](./data_converter/README.md): 
+* [Data Converter](./data_converter/): 
     Converts data for the AHM hdf5 format to a generic UMUGUC (uncompressed) format. 
 
 * Visualizer: 
     Interactively visualizes the point cloud with different properties (point cloud height map, grid, shape factors).
 
-## 

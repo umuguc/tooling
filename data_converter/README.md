@@ -33,14 +33,12 @@ HDF5_PLUGIN_PATH="./src/" ./src/converter <group_name_of_pointcloud_dataset> <ou
 
 The resulting file format looks like following (the input datatype is set to double, the output datatype can be easily changed in code):
 
-* Point cloud:
-
-    * Type
+* Type
 ```c++
 std::vector<sycl::vec<double, 3>> Points;
 ```
 
-    * Binary:
+* Binary:
 ```bin
 x y z
 x y z
