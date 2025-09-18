@@ -90,24 +90,27 @@ void visualize_points_with_open3d(
   auto tile_colors = generate_distinct_colors(num_tiles);
 
   std::vector<Eigen::Vector3d> all_colors(all_points.size(), {0, 0, 0});
-  std::vector<Eigen::Vector3d> original_colors = pcd->colors_;
+  std::vector<Eigen::Vector3d> shape_factor_colors = all_colors;
+  std::vector<Eigen::Vector3d> tile_colors_vec = all_colors;
 
-  set_shape_factor_colors(all_colors, all_shape_factors);
+  set_shape_factor_colors(shape_factor_colors, all_shape_factors);
+  set_colors(tile_colors_vec, p, tile_colors, num_tiles);
 
   auto toggle_colors = [&](open3d::visualization::Visualizer *vis) {
     static int color_mode = 0;
     if (color_mode == 0) {
-      std::cout << "Setting colors" << std::endl;
-      set_colors(all_colors, p, tile_colors, num_tiles);
+      std::cout << "Setting tile colors" << std::endl;
+      pcd->colors_ = tile_colors_vec;
       color_mode = 1;
     } else if (color_mode == 1) {
-      set_shape_factor_colors(all_colors, all_shape_factors);
+      std::cout << "Setting shape factor colors" << std::endl;
+      pcd->colors_ = shape_factor_colors;
       color_mode = 2;
     } else {
-      all_colors = original_colors;
+      std::cout << "Resetting to black colors" << std::endl;
+      pcd->colors_ = std::vector<Eigen::Vector3d>(all_points.size(), {0, 0, 0});
       color_mode = 0;
     }
-    pcd->colors_ = all_colors;
     vis->UpdateGeometry(pcd);
     return true;
   };
@@ -121,48 +124,6 @@ void visualize_points_with_open3d(
   vis.PollEvents();
   vis.Run();
 }
-
-// working switch
-// void visualize_points_with_open3d(
-//     const std::pair<std::vector<std::vector<std::vector<Point>>>,
-//                     std::vector<std::vector<std::vector<Point>>>> &points) {
-//   auto &[p, s] = points;
-
-//   auto all_points = flatten_points(p);
-//   auto all_shape_factors = flatten_points(s);
-
-//   auto pcd = std::make_shared<open3d::geometry::PointCloud>();
-//   pcd->points_ = all_points;
-
-//   auto num_tiles = p.size() * p[0].size();
-//   auto tile_colors = generate_distinct_colors(num_tiles);
-
-//   std::vector<Eigen::Vector3d> all_colors(all_points.size(), {0, 0, 0});
-//   set_shape_factor_colors(all_colors, all_shape_factors);
-
-//   auto toggle_colors = [&](open3d::visualization::Visualizer *vis) {
-//     static std::string color_mode = "shape_factors";
-//     if (color_mode == "shape_factors") {
-//       set_colors(all_colors, p, tile_colors, num_tiles);
-//       color_mode = "tiles";
-//     } else {
-//       set_shape_factor_colors(all_colors, all_shape_factors);
-//       color_mode = "shape_factors";
-//     }
-//     pcd->colors_ = all_colors;
-//     vis->UpdateGeometry(pcd);
-//     return true;
-//   };
-
-//   std::cout << "Launching Open3D visualizer. Press 'C' to toggle colors."
-//             << std::endl;
-//   open3d::visualization::VisualizerWithKeyCallback vis;
-//   vis.CreateVisualizerWindow();
-//   vis.AddGeometry(pcd);
-//   vis.RegisterKeyCallback('C', toggle_colors);
-//   vis.PollEvents();
-//   vis.Run();
-// }
 
 void save_images(
     const std::pair<std::vector<std::vector<std::vector<Point>>>,
