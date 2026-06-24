@@ -1,0 +1,61 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "All targets (native + WASM if emcmake available)",
+      "description": "Super-build: native converter + native visualizer; WASM if emcmake is on PATH",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "native",
+      "displayName": "Native targets only",
+      "description": "Builds data_converter and visualizer with the host compiler",
+      "binaryDir": "${sourceDir}/build/native",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "EMCMAKE": "EMCMAKE-NOTFOUND"
+      }
+    },
+    {
+      "name": "native-converter",
+      "displayName": "Native: data_converter only",
+      "description": "Builds only the HDF5 data_converter with the host compiler",
+      "binaryDir": "${sourceDir}/data_converter/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "generator": "Ninja",
+      "condition": {
+        "type": "notEquals",
+        "lhs": "${sourceDir}/data_converter/CMakeLists.txt",
+        "rhs": ""
+      }
+    },
+    {
+      "name": "native-visualizer",
+      "displayName": "Native: visualizer only",
+      "description": "Builds only the Open3D visualizer with the host compiler",
+      "binaryDir": "${sourceDir}/visualizer/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "jobs": 0
+    },
+    {
+      "name": "native",
+      "configurePreset": "native",
+      "jobs": 0
+    }
+  ]
+}

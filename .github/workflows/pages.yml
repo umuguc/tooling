@@ -1,0 +1,110 @@
+name: Build and Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Toolchain setup ────────────────────────────────────────────────────
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.73
+          actions-cache-folder: emsdk-cache
+
+      # ── Native data_converter (downloads HDF5/zlib/hdf5_plugins sources) ──
+      - name: Cache native data_converter build
+        id: cache-native
+        uses: actions/cache@v4
+        with:
+          path: data_converter/build
+          key: native-dc-${{ runner.os }}-${{ hashFiles('data_converter/CMakeLists.txt', 'data_converter/Dependencies.cmake', 'data_converter/src/CMakeLists.txt', 'data_converter/src/*.cpp') }}
+
+      - name: Configure + build native data_converter
+        if: steps.cache-native.outputs.cache-hit != 'true'
+        run: |
+          cmake -S data_converter \
+                -B data_converter/build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -G Ninja
+          cmake --build data_converter/build --parallel
+
+      # ── WASM data_converter ───────────────────────────────────────────────
+      - name: Cache WASM data_converter build
+        uses: actions/cache@v4
+        with:
+          path: data_converter/wasm/build
+          key: wasm-dc-${{ runner.os }}-${{ hashFiles('data_converter/wasm/CMakeLists.txt', 'data_converter/wasm/src/CMakeLists.txt', 'data_converter/Dependencies.cmake') }}-emsdk-3.1.73
+
+      - name: Configure + build WASM data_converter
+        run: |
+          emcmake cmake -S data_converter/wasm \
+                        -B data_converter/wasm/build \
+                        -DCMAKE_BUILD_TYPE=Release \
+                        -G Ninja \
+                        -DNATIVE_BUILD_DIR=${{ github.workspace }}/data_converter/build
+          cmake --build data_converter/wasm/build --parallel
+
+      # ── WASM visualizer ───────────────────────────────────────────────────
+      - name: Cache WASM visualizer build
+        uses: actions/cache@v4
+        with:
+          path: visualizer/wasm/build
+          key: wasm-vis-${{ runner.os }}-${{ hashFiles('visualizer/wasm/CMakeLists.txt', 'visualizer/wasm/src/CMakeLists.txt', 'visualizer/wasm/src/*.cpp') }}-emsdk-3.1.73
+
+      - name: Configure + build WASM visualizer
+        run: |
+          emcmake cmake -S visualizer/wasm \
+                        -B visualizer/wasm/build \
+                        -DCMAKE_BUILD_TYPE=Release \
+                        -G Ninja
+          cmake --build visualizer/wasm/build --parallel
+
+      # ── Assemble static site ──────────────────────────────────────────────
+      - name: Assemble site
+        run: |
+          mkdir -p site/convert site/visualize
+          cp web/index.html site/
+          cp data_converter/wasm/web/index.html site/convert/
+          cp data_converter/wasm/web/explorer.js  site/convert/
+          cp visualizer/wasm/web/index.html       site/visualize/
+          cp visualizer/wasm/web/gridvis.js       site/visualize/
+
+      # ── Deploy ────────────────────────────────────────────────────────────
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

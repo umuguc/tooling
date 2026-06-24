@@ -1,0 +1,1391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>HDF5 Web Tools</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+  background:#0d1117;color:#e6edf3;
+  min-height:100vh;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+}
+
+/* ── Upload screen ── */
+#upload-screen{
+  display:flex;flex-direction:column;align-items:center;gap:28px;
+  padding:40px;max-width:520px;width:100%;
+}
+h1{font-size:28px;font-weight:700;letter-spacing:-.5px}
+h1 span{color:#3fb950}
+.subtitle{font-size:14px;color:#7d8590;text-align:center;line-height:1.6}
+
+#drop-zone{
+  width:100%;border:2px dashed #30363d;border-radius:12px;
+  padding:48px 32px;text-align:center;cursor:pointer;
+  transition:border-color .2s,background .2s;position:relative;
+}
+#drop-zone:hover,#drop-zone.drag-over{border-color:#3fb950;background:#12261e20}
+#drop-zone.has-file{border-color:#238636;background:#12261e30}
+#drop-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.drop-icon{font-size:48px;display:block;margin-bottom:16px;opacity:.5}
+.drop-title{font-size:15px;font-weight:600;margin-bottom:8px}
+.drop-hint{font-size:12px;color:#7d8590}
+#drop-filename{font-size:12px;color:#3fb950;margin-top:8px;word-break:break-all}
+
+#action-buttons{display:none;width:100%;gap:12px;flex-direction:row}
+.action-btn{
+  flex:1;padding:12px;border-radius:8px;border:none;
+  font-size:14px;font-weight:600;cursor:pointer;transition:background .2s,opacity .2s;
+}
+#btn-explore {background:#1f6feb;color:#e6edf3}
+#btn-explore:hover{background:#388bfd}
+#btn-convert {background:#238636;color:#e6edf3}
+#btn-convert:hover{background:#2ea043}
+
+/* ── Status ── */
+#status{
+  display:none;flex-direction:column;align-items:center;gap:16px;
+  font-size:14px;color:#7d8590;
+}
+.spinner{width:36px;height:36px;border:3px solid #21262d;border-top-color:#3fb950;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Error banner ── */
+#error-banner{display:none;background:#2d1515;border:1px solid #f8514930;border-radius:8px;padding:12px 20px;font-size:13px;color:#ff7b72;max-width:480px;text-align:center}
+
+/* ── Explorer iframe ── */
+#result-frame{display:none;width:100vw;height:100vh;border:none;position:fixed;inset:0}
+#explore-back{
+  display:none;position:fixed;top:14px;left:14px;z-index:50;
+  background:#161b22cc;backdrop-filter:blur(6px);
+  border:1px solid #30363d;color:#e6edf3;border-radius:6px;
+  padding:6px 14px;font-size:13px;font-weight:600;cursor:pointer;
+  transition:background .2s,border-color .2s;
+}
+#explore-back:hover{background:#21262dcc;border-color:#7d8590}
+
+/* ── WASM loading overlay ── */
+#wasm-loading{position:fixed;inset:0;background:#0d1117;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;z-index:100;font-size:13px;color:#7d8590;transition:opacity .3s}
+
+/* ── Convert panel ── */
+#convert-panel{display:none;flex-direction:column;position:fixed;inset:0;background:#0d1117;overflow:hidden}
+
+#cp-header{
+  flex-shrink:0;z-index:10;
+  background:#161b22;border-bottom:1px solid #30363d;
+  padding:12px 20px;display:flex;align-items:center;gap:16px;
+}
+#btn-back{
+  background:none;border:1px solid #30363d;color:#7d8590;border-radius:6px;
+  padding:5px 12px;font-size:13px;cursor:pointer;flex-shrink:0;
+  transition:border-color .2s,color .2s;
+}
+#btn-back:hover{border-color:#7d8590;color:#e6edf3}
+#cp-title{font-size:15px;font-weight:600}
+#cp-file{font-size:12px;color:#7d8590;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.panel-layout{display:flex;flex:1;min-height:0;overflow:hidden}
+.hdf5-sidebar{width:232px;flex-shrink:0;border-right:1px solid #21262d;overflow-y:auto;
+              display:flex;flex-direction:column;background:#0d1117}
+.sb-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;
+          color:#484f58;padding:14px 14px 6px;flex-shrink:0}
+.sb-tree{flex:1;overflow-y:auto;padding:0 6px 8px}
+.sb-empty{font-size:11px;color:#30363d;padding:8px 14px}
+/* Sidebar tree — matches the explore() HTML colorscheme:
+   groups=#f0883e  datasets=#acd0f7  ds-icon=#3fb950  hover=#1c2128  sel=#1f6feb1a */
+.sbn{display:flex;align-items:center;gap:0;cursor:pointer;
+     user-select:none;transition:background .1s;position:relative}
+.sbn:hover{background:#1c2128}
+.sbn.sel{background:#1f6feb1a;border-left:2px solid #1f6feb;padding-left:0}
+.sbn-toggle{width:18px;height:28px;display:flex;align-items:center;justify-content:center;
+            flex-shrink:0;font-size:9px;color:#7d8590;transition:transform .15s}
+.sbn-toggle.open{transform:rotate(90deg)}
+.sbn-icon{width:14px;flex-shrink:0;font-size:9px;line-height:28px;color:#3fb950}
+.sbn-name{flex:1;min-width:0;font-size:11.5px;line-height:28px;overflow:hidden;
+          text-overflow:ellipsis;white-space:nowrap;color:#f0883e;font-weight:500;
+          font-family:'Cascadia Code','Fira Code','Consolas',monospace}
+.sbn-ds .sbn-name{color:#acd0f7;font-weight:400}
+.sb-actions{flex-shrink:0;border-top:1px solid #21262d;padding:8px 10px}
+.sb-sel-path{font-size:10px;color:#a5d6ff;font-family:monospace;
+             overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+             margin-bottom:6px;padding:0 2px}
+.sb-use-btn{display:block;width:100%;text-align:left;padding:4px 8px;margin-bottom:3px;
+            border-radius:5px;border:1px solid #21262d;background:transparent;
+            color:#7d8590;font-size:10.5px;cursor:pointer;transition:all .12s;
+            font-family:inherit}
+.sb-use-btn:hover{background:#1f6feb1a;border-color:#1f6feb;color:#79c0ff}
+.sb-use-btn.sf:hover{background:#12261e;border-color:#238636;color:#3fb950}
+#cp-body{flex:1;overflow-y:auto;padding:28px 32px;display:flex;flex-direction:column;gap:32px;max-width:800px}
+
+.section-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:#7d8590;margin-bottom:12px}
+
+/* Search row */
+#search-row{display:flex;gap:10px;align-items:center}
+#group-name-input{
+  flex:1;background:#161b22;border:1px solid #30363d;border-radius:8px;
+  color:#e6edf3;padding:9px 14px;font-size:14px;outline:none;
+  transition:border-color .2s;
+}
+#group-name-input:focus{border-color:#1f6feb}
+.pill-btn{
+  background:#1f6feb;color:#e6edf3;border:none;border-radius:8px;
+  padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;
+  transition:background .2s;white-space:nowrap;
+}
+.pill-btn:hover{background:#388bfd}
+.pill-btn:disabled{background:#21262d;color:#484f58;cursor:not-allowed}
+.pill-btn.green{background:#238636}
+.pill-btn.green:hover{background:#2ea043}
+
+/* Groups list */
+#groups-section{display:none}
+.group-item{
+  display:flex;align-items:center;gap:10px;padding:10px 14px;
+  border:1px solid #21262d;border-radius:8px;cursor:pointer;
+  transition:border-color .2s,background .2s;margin-bottom:6px;
+  font-size:13px;font-family:'Cascadia Code','Fira Code',monospace;
+}
+.group-item:hover{background:#161b22;border-color:#30363d}
+.group-item.selected{background:#1f6feb1a;border-color:#1f6feb}
+.group-dot{width:10px;height:10px;border-radius:50%;border:2px solid #30363d;flex-shrink:0}
+.group-item.selected .group-dot{background:#1f6feb;border-color:#1f6feb}
+#no-groups{color:#7d8590;font-size:13px;padding:8px 0}
+
+/* Datasets section */
+#datasets-section{display:none}
+#datasets-grid{display:flex;flex-wrap:wrap;gap:6px}
+.ds-chip{
+  display:flex;align-items:center;gap:6px;padding:5px 12px;
+  border:1px solid #21262d;border-radius:6px;cursor:pointer;
+  font-size:12px;font-family:'Cascadia Code','Fira Code',monospace;
+  transition:border-color .2s,background .2s;user-select:none;
+}
+.ds-chip:hover{border-color:#30363d;background:#161b22}
+.ds-chip.checked{background:#12261e;border-color:#238636;color:#3fb950}
+.ds-chip input[type=checkbox]{display:none}
+#ds-controls{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.link-btn{background:none;border:none;color:#1f6feb;font-size:12px;cursor:pointer;padding:0;text-decoration:underline}
+.link-btn:hover{color:#388bfd}
+#sel-count{font-size:12px;color:#7d8590;margin-left:auto}
+
+/* Shape factors section */
+#sf-section{display:none}
+
+/* Grid + download section */
+#grid-section{display:none}
+#grid-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.num-input{
+  width:64px;background:#161b22;border:1px solid #30363d;border-radius:6px;
+  color:#e6edf3;padding:7px 10px;font-size:14px;outline:none;text-align:center;
+}
+.num-input:focus{border-color:#1f6feb}
+#grid-info{font-size:12px;color:#7d8590}
+#grid-warn{font-size:12px;color:#f0883e;display:none}
+#tile-grid{display:grid;gap:3px;margin-top:12px;overflow-x:auto;padding-bottom:2px}
+.tg-cell{width:38px;height:34px;border-radius:5px;border:1px solid #30363d;
+         background:#161b22;cursor:pointer;display:flex;align-items:center;
+         justify-content:center;font-size:10px;user-select:none;
+         transition:background .12s,border-color .12s;color:#484f58}
+.tg-cell.filled{background:#12261e;border-color:#238636;color:#3fb950;font-weight:600}
+.tg-cell.empty{background:#0d1117;border-color:#21262d;color:#30363d}
+
+/* Progress in convert */
+#convert-status{display:none;align-items:center;gap:12px;font-size:13px;color:#7d8590}
+
+/* ── Build HDF5 panel ── */
+#btn-build{background:#6e40c9;color:#e6edf3}
+#btn-build:hover{background:#8957e5}
+#build-panel{display:none;flex-direction:column;position:fixed;inset:0;background:#0d1117;overflow:hidden}
+#bp-header{flex-shrink:0;z-index:10;background:#161b22;border-bottom:1px solid #30363d;padding:12px 20px;display:flex;align-items:center;gap:16px}
+#bp-body{flex:1;overflow-y:auto;padding:28px 32px;display:flex;flex-direction:column;gap:32px;max-width:800px}
+.json-input{width:100%;background:#161b22;border:1px solid #30363d;border-radius:8px;color:#a5d6ff;padding:12px 14px;font-size:12px;font-family:'Cascadia Code','Fira Code','Consolas',monospace;outline:none;resize:vertical;min-height:96px;transition:border-color .2s}
+.json-input:focus{border-color:#1f6feb}
+.path-input{width:100%;background:#161b22;border:1px solid #30363d;border-radius:8px;color:#e6edf3;padding:9px 14px;font-size:13px;outline:none;font-family:'Cascadia Code','Fira Code','Consolas',monospace;transition:border-color .2s}
+.path-input:focus{border-color:#1f6feb}
+.bin-drop-row{display:flex;gap:12px;flex-wrap:wrap}
+.bin-drop{flex:1;min-width:180px;border:2px dashed #30363d;border-radius:10px;padding:18px 14px;text-align:center;cursor:pointer;position:relative;transition:border-color .2s,background .2s}
+.bin-drop:hover{border-color:#1f6feb;background:#111d3a15}
+.bin-drop.has-file{border-color:#238636;background:#12261e20}
+.bin-drop input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.bin-drop-icon{font-size:26px;display:block;margin-bottom:8px;opacity:.4}
+.bin-drop-label{font-size:13px;font-weight:600;color:#e6edf3;margin-bottom:3px}
+.bin-drop-hint{font-size:11px;color:#484f58}
+.bin-drop-name{font-size:11px;color:#3fb950;margin-top:6px;word-break:break-all}
+.tmpl-search-input{flex:1;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:7px 12px;font-size:13px;outline:none;transition:border-color .2s}
+.tmpl-search-input:focus{border-color:#1f6feb}
+.tmpl-result-item{padding:7px 10px;border:1px solid #21262d;border-radius:6px;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;transition:background .2s}
+.tmpl-result-item:hover{background:#1c2128}
+.use-for-btn{background:none;border:1px solid #30363d;border-radius:4px;color:#7d8590;font-size:11px;padding:2px 8px;cursor:pointer;white-space:nowrap;transition:all .15s}
+.use-for-btn:hover{border-color:#1f6feb;color:#58a6ff;background:#111d3a}
+.use-for-btn.sf:hover{border-color:#238636;color:#3fb950;background:#12261e}
+</style>
+</head>
+<body>
+
+<div id="wasm-loading">
+  <div class="spinner"></div>
+  <span>Loading WASM module…</span>
+</div>
+
+<!-- ── Upload screen ──────────────────────────────────────────────────────── -->
+<div id="upload-screen" style="display:none">
+  <h1>HDF5 <span>Web</span> Tools</h1>
+  <p class="subtitle">
+    Explore the structure of HDF5 files or convert datasets to the binary grid format —
+    everything runs in the browser, your file never leaves your machine.
+  </p>
+
+  <div id="drop-zone">
+    <input type="file" id="file-input" accept=".h5,.hdf5,.f5,.he5,.nc,.bin">
+    <span class="drop-icon">◈</span>
+    <div class="drop-title">Drop your file here</div>
+    <div class="drop-hint">.h5 · .hdf5 · .f5 · .he5 · .nc · .bin — or click to browse</div>
+    <div id="drop-filename"></div>
+  </div>
+
+  <div id="action-buttons">
+    <button id="btn-explore" class="action-btn" onclick="doExplore()">Explore Structure</button>
+    <button id="btn-convert" class="action-btn" onclick="doConvert()">Convert to Binary</button>
+    <button id="btn-build" class="action-btn" onclick="doBuild()" style="display:none">Build HDF5</button>
+  </div>
+
+  <div id="error-banner"></div>
+</div>
+
+<!-- ── Status spinner ─────────────────────────────────────────────────────── -->
+<div id="status">
+  <div class="spinner"></div>
+  <span id="status-text">Processing…</span>
+</div>
+
+<!-- ── Explorer result ────────────────────────────────────────────────────── -->
+<button id="explore-back" onclick="goBack()">← Back</button>
+<iframe id="result-frame"></iframe>
+
+<!-- ── Convert panel ─────────────────────────────────────────────────────── -->
+<div id="convert-panel">
+  <div id="cp-header">
+    <button id="btn-back" onclick="goBack()">← Back</button>
+    <span id="cp-title">Convert to Binary</span>
+    <span id="cp-file"></span>
+  </div>
+
+  <div class="panel-layout">
+  <div class="hdf5-sidebar" id="cp-sidebar">
+    <div class="sb-title">File structure</div>
+    <div class="sb-tree" id="cp-tree"><div class="sb-empty">Load an HDF5 file to see its structure here.</div></div>
+    <div class="sb-actions" id="cp-actions" style="display:none">
+      <div class="sb-sel-path" id="cp-sel-path"></div>
+      <button class="sb-use-btn" onclick="useSbPath('cp','pos')">→ Use as positions group</button>
+      <button class="sb-use-btn sf" onclick="useSbPath('cp','sf')">→ Use as SF parent</button>
+    </div>
+  </div>
+
+  <div id="cp-body">
+
+    <!-- Step 1: Search for groups -->
+    <div>
+      <div class="section-title">1 · Find groups by name</div>
+      <div id="search-row">
+        <input id="group-name-input" type="text" value="Positions" placeholder="Group name…"
+               onkeydown="if(event.key==='Enter')searchGroups()"/>
+        <button class="pill-btn" onclick="searchGroups()">Search</button>
+      </div>
+    </div>
+
+    <!-- Step 2: Groups list -->
+    <div id="groups-section">
+      <div class="section-title">2 · Select a group</div>
+      <div id="groups-list"></div>
+    </div>
+
+    <!-- Step 3: Dataset selection -->
+    <div id="datasets-section">
+      <div class="section-title">3 · Select datasets</div>
+      <div id="ds-controls">
+        <button class="link-btn" onclick="selAll(true)">Select all</button>
+        <button class="link-btn" onclick="selAll(false)">Deselect all</button>
+        <span id="sel-count">0 selected</span>
+      </div>
+      <div id="datasets-grid"></div>
+    </div>
+
+    <!-- Step 3b: Shape factors (optional) -->
+    <div id="sf-section">
+      <div class="section-title">
+        Shape factors
+        <span style="color:#7d8590;font-weight:400;text-transform:none;letter-spacing:0"> — optional</span>
+      </div>
+      <div style="margin-bottom:12px">
+        <div style="font-size:12px;color:#7d8590;margin-bottom:6px">Parent path containing the SF datasets</div>
+        <input id="sf-parent-path" type="text"
+               style="width:100%;background:#161b22;border:1px solid #30363d;border-radius:8px;
+                      color:#e6edf3;padding:9px 14px;font-size:13px;outline:none;
+                      font-family:'Cascadia Code','Fira Code',monospace;transition:border-color .2s"
+               placeholder="auto-derived from positions group"
+               onfocus="this.style.borderColor='#1f6feb'" onblur="this.style.borderColor='#30363d'"/>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <div style="display:flex;flex-direction:column;gap:3px">
+          <span style="font-size:11px;color:#3fb950">R — linearity group</span>
+          <input id="sf-field-l" class="num-input" style="width:130px;text-align:left;padding:7px 10px"
+                 type="text" value="Linear"/>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px">
+          <span style="font-size:11px;color:#3fb950">G — planarity group</span>
+          <input id="sf-field-p" class="num-input" style="width:130px;text-align:left;padding:7px 10px"
+                 type="text" value="Planarity"/>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px">
+          <span style="font-size:11px;color:#3fb950">B — sphericity group</span>
+          <input id="sf-field-s" class="num-input" style="width:130px;text-align:left;padding:7px 10px"
+                 type="text" value="Spherical"/>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 4: Grid layout + download -->
+    <div id="grid-section">
+      <div class="section-title">4 · Grid layout &amp; download</div>
+      <div id="grid-row">
+        <input id="grid-rows" class="num-input" type="number" value="1" min="1"
+               oninput="onGridDimInput('rows')"/> rows
+        <span style="color:#7d8590">×</span>
+        <input id="grid-cols" class="num-input" type="number" min="1" style="width:64px"
+               oninput="onGridDimInput('cols')"/> cols
+        <span id="grid-info"></span>
+      </div>
+      <div style="font-size:11px;color:#7d8590;margin-top:6px">Click a tile to toggle it empty (∅ = no data written).</div>
+      <div id="tile-grid"></div>
+      <br>
+      <div id="convert-status">
+        <div class="spinner"></div>
+        <span id="convert-status-text">Converting…</span>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button id="btn-download" class="pill-btn green" onclick="doDownload()">↓ Download tiles.bin</button>
+        <button id="btn-download-sf" class="pill-btn" style="background:#1f6feb;display:none" onclick="doDownloadSF()">↓ Download sf.bin</button>
+      </div>
+    </div>
+
+  </div><!-- cp-body -->
+  </div><!-- panel-layout -->
+</div><!-- convert-panel -->
+
+<!-- ── Build HDF5 panel ───────────────────────────────────────────────────── -->
+<div id="build-panel">
+  <div id="bp-header">
+    <button onclick="goBack()" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:5px 14px;font-size:13px;font-weight:600;cursor:pointer;transition:border-color .2s,color .2s">← Back</button>
+    <span style="font-size:15px;font-weight:600">Build HDF5</span>
+    <span id="bp-subtitle" style="font-size:12px;color:#7d8590;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+  </div>
+
+  <div class="panel-layout">
+  <div class="hdf5-sidebar" id="bp-sidebar">
+    <div class="sb-title">File structure</div>
+    <div class="sb-tree" id="bp-tree"><div class="sb-empty">Load a reference .f5 to browse its structure here.</div></div>
+    <div class="sb-actions" id="bp-actions" style="display:none">
+      <div class="sb-sel-path" id="bp-sel-path"></div>
+      <button class="sb-use-btn" onclick="useSbPath('bp','pos')">→ Use as positions path</button>
+      <button class="sb-use-btn sf" onclick="useSbPath('bp','sf')">→ Use as SF parent</button>
+    </div>
+  </div>
+
+  <div id="bp-body">
+
+    <!-- Step 1: Reference template -->
+    <div>
+      <div class="section-title">1 · Reference .f5 <span style="color:#7d8590;font-weight:400;text-transform:none;letter-spacing:0">— optional, for path suggestions</span></div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <div style="position:relative;display:inline-block">
+            <button style="background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;transition:border-color .2s">Load reference .f5…</button>
+            <input type="file" id="tmpl-file-input" accept=".h5,.hdf5,.f5,.he5,.nc"
+                   style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%"
+                   onchange="onTemplateFile(event)"/>
+          </div>
+          <span id="tmpl-name" style="display:none;font-size:12px;color:#3fb950"></span>
+        </div>
+        <div id="tmpl-search-area" style="display:none;flex-direction:column;gap:8px">
+          <div style="font-size:11px;color:#7d8590">Search groups in the template to fill paths below:</div>
+          <div style="display:flex;gap:8px">
+            <input id="tmpl-search-input" class="tmpl-search-input" type="text" placeholder="Group name…"
+                   onkeydown="if(event.key==='Enter')searchTmplGroups()"/>
+            <button class="pill-btn" style="padding:7px 14px;font-size:12px" onclick="searchTmplGroups()">Search</button>
+          </div>
+          <div id="tmpl-results" style="display:flex;flex-direction:column;gap:4px;max-height:160px;overflow-y:auto"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2: Binary files -->
+    <div>
+      <div class="section-title">2 · Binary files</div>
+      <div class="bin-drop-row">
+        <div class="bin-drop" id="pos-drop">
+          <input type="file" id="pos-bin-input" accept=".bin" onchange="onBinFile(event,'pos')"/>
+          <span class="bin-drop-icon">◈</span>
+          <div class="bin-drop-label">Positions .bin</div>
+          <div class="bin-drop-hint">tiles.bin</div>
+          <div id="pos-drop-name" class="bin-drop-name"></div>
+        </div>
+        <div class="bin-drop" id="sf-drop">
+          <input type="file" id="sf-bin-input" accept=".bin" onchange="onBinFile(event,'sf')"/>
+          <span class="bin-drop-icon">◈</span>
+          <div class="bin-drop-label">Shape Factors .bin</div>
+          <div class="bin-drop-hint">sf.bin</div>
+          <div id="sf-drop-name" class="bin-drop-name"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3: Dataset names -->
+    <div>
+      <div class="section-title">3 · Dataset names</div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <input id="bp-name-prefix" type="text" value="tile"
+               style="width:76px;background:#161b22;border:1px solid #30363d;border-radius:6px;
+                      color:#e6edf3;padding:5px 10px;font-size:12px;outline:none;
+                      font-family:'Cascadia Code','Fira Code','Consolas',monospace;transition:border-color .2s"
+               onfocus="this.style.borderColor='#1f6feb'" onblur="this.style.borderColor='#30363d'"
+               placeholder="prefix"/>
+        <span style="font-size:11px;color:#484f58">_{row}x{col}</span>
+        <span style="color:#30363d">·</span>
+        <input id="bp-name-count" class="num-input" type="number" min="1" style="width:72px" placeholder="total"/>
+        <span style="font-size:12px;color:#7d8590">tiles</span>
+        <button class="pill-btn" style="padding:5px 14px;font-size:12px" onclick="generateBpNames()">Generate</button>
+      </div>
+      <textarea id="bp-ds-names" class="json-input"
+                placeholder='["tile_0x0", "tile_0x1", "tile_1x0", ...]'
+                oninput="updateBuildGrid()"></textarea>
+    </div>
+
+    <!-- Step 4: Grid layout -->
+    <div>
+      <div class="section-title">4 · Grid layout</div>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <input id="bp-rows" class="num-input" type="number" value="1" min="1"
+               oninput="updateBuildGrid()"/> rows
+        <span style="color:#7d8590">×</span>
+        <span id="bp-cols" style="font-size:14px;color:#e6edf3">—</span> cols
+        <span id="bp-grid-info" style="font-size:12px;color:#7d8590"></span>
+      </div>
+    </div>
+
+    <!-- Step 5: Output paths -->
+    <div>
+      <div class="section-title">5 · Output paths</div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div>
+          <div style="font-size:12px;color:#7d8590;margin-bottom:6px">Positions group path</div>
+          <input id="bp-pos-path" class="path-input" type="text" value="/Positions"
+                 onfocus="this.style.borderColor='#1f6feb'" onblur="this.style.borderColor='#30363d'"/>
+        </div>
+        <div>
+          <div style="font-size:12px;color:#7d8590;margin-bottom:6px">Shape factors parent path</div>
+          <input id="bp-sf-parent" class="path-input" type="text" value="/"
+                 onfocus="this.style.borderColor='#1f6feb'" onblur="this.style.borderColor='#30363d'"/>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div style="display:flex;flex-direction:column;gap:3px">
+            <span style="font-size:11px;color:#3fb950">Linearity group</span>
+            <input id="bp-sf-l" class="num-input" style="width:130px;text-align:left;padding:7px 10px" type="text" value="Linear"/>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:3px">
+            <span style="font-size:11px;color:#3fb950">Planarity group</span>
+            <input id="bp-sf-p" class="num-input" style="width:130px;text-align:left;padding:7px 10px" type="text" value="Planarity"/>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:3px">
+            <span style="font-size:11px;color:#3fb950">Sphericity group</span>
+            <input id="bp-sf-s" class="num-input" style="width:130px;text-align:left;padding:7px 10px" type="text" value="Spherical"/>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Download -->
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+        <span style="font-size:12px;color:#7d8590">Output filename:</span>
+        <input id="bp-out-name" type="text" value="tile"
+               style="width:200px;background:#161b22;border:1px solid #30363d;border-radius:6px;
+                      color:#e6edf3;padding:5px 10px;font-size:13px;outline:none;
+                      font-family:'Cascadia Code','Fira Code','Consolas',monospace;transition:border-color .2s"
+               onfocus="this.style.borderColor='#1f6feb'" onblur="this.style.borderColor='#30363d'"/>
+        <span style="font-size:12px;color:#7d8590">.h5</span>
+      </div>
+      <div id="build-status" style="display:none;align-items:center;gap:12px;font-size:13px;color:#7d8590;margin-bottom:12px">
+        <div class="spinner"></div>
+        <span id="build-status-text">Building…</span>
+      </div>
+      <button id="btn-build-dl" class="pill-btn green" onclick="doBuildDownload()">↓ Download .h5</button>
+    </div>
+
+  </div><!-- bp-body -->
+  </div><!-- panel-layout -->
+</div><!-- build-panel -->
+
+<script src="explorer.js"></script>
+<script>
+createExplorer().then(Module => {
+  window._explorerModule = Module; // expose for srcdoc iframe download calls
+
+  // ── WASM ready ───────────────────────────────────────────────────────────────
+  document.getElementById('wasm-loading').style.opacity = '0';
+  setTimeout(() => {
+    document.getElementById('wasm-loading').style.display = 'none';
+    document.getElementById('upload-screen').style.display = 'flex';
+  }, 300);
+
+  // ── State ────────────────────────────────────────────────────────────────────
+  let currentFile    = null;
+  let vfsPath        = null;   // non-null when file is loaded in virtual FS
+  let selectedGroup   = null;
+  let allDatasets     = [];
+  let checkedDatasets = new Set();
+  let emptyPositions  = new Set();  // Set of linear indices (i*cols+j) marked as empty
+
+  // ── VFS helpers ──────────────────────────────────────────────────────────────
+  async function ensureInVFS() {
+    if (vfsPath) return;
+    const bytes = new Uint8Array(await currentFile.arrayBuffer());
+    Module.FS.writeFile('/upload.h5', bytes);
+    vfsPath = '/upload.h5';
+  }
+
+  function removeFromVFS() {
+    if (vfsPath) {
+      try { Module.FS.unlink(vfsPath); } catch(_) {}
+      vfsPath = null;
+    }
+  }
+
+  // ── File input ───────────────────────────────────────────────────────────────
+  const dropZone  = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+
+  function setFile(file) {
+    if (!file) return;
+    removeFromVFS();
+    currentFile = file;
+    document.getElementById('drop-filename').textContent = file.name;
+    dropZone.classList.add('has-file');
+    document.getElementById('action-buttons').style.display = 'flex';
+    document.getElementById('error-banner').style.display  = 'none';
+    const isBin = file.name.toLowerCase().endsWith('.bin');
+    document.getElementById('btn-explore').style.display = isBin ? 'none' : '';
+    document.getElementById('btn-convert').style.display = isBin ? 'none' : '';
+    document.getElementById('btn-build').style.display   = '';
+  }
+
+  fileInput.addEventListener('change', e => setFile(e.target.files[0]));
+  dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', ()  => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    setFile(e.dataTransfer.files[0]);
+  });
+
+  // ── Error helpers ────────────────────────────────────────────────────────────
+  const errBanner = document.getElementById('error-banner');
+  function showError(msg) {
+    document.getElementById('upload-screen').style.display = 'flex';
+    document.getElementById('status').style.display        = 'none';
+    errBanner.style.display  = 'block';
+    errBanner.textContent    = msg;
+  }
+
+  // ── Explore mode ─────────────────────────────────────────────────────────────
+  window.doExplore = async function() {
+    if (!currentFile) return;
+    errBanner.style.display = 'none';
+    document.getElementById('upload-screen').style.display = 'none';
+    const status     = document.getElementById('status');
+    const statusText = document.getElementById('status-text');
+    status.style.display = 'flex';
+
+    try {
+      statusText.textContent = `Reading ${currentFile.name}…`;
+      await ensureInVFS();
+
+      statusText.textContent = 'Building tree…';
+      await new Promise(r => setTimeout(r, 0));
+
+      const ptr  = Module.ccall('explore', 'number', ['string'], [vfsPath]);
+      const html = Module.UTF8ToString(ptr);
+      Module._free_result(ptr);
+      removeFromVFS();
+
+      if (!html.startsWith('<!DOCTYPE')) { showError(html.replace(/<[^>]*>/g, '').trim()); return; }
+
+      status.style.display = 'none';
+      const frame = document.getElementById('result-frame');
+      frame.srcdoc        = html;
+      frame.style.display = 'block';
+      document.getElementById('explore-back').style.display = 'block';
+    } catch (err) {
+      showError('Unexpected error: ' + err.message);
+    }
+  };
+
+  // ── Convert mode ─────────────────────────────────────────────────────────────
+  window.doConvert = function() {
+    if (!currentFile) return;
+    errBanner.style.display = 'none';
+    document.getElementById('upload-screen').style.display = 'none';
+    document.getElementById('cp-file').textContent = currentFile.name;
+
+    // Reset convert panel state
+    selectedGroup   = null;
+    allDatasets     = [];
+    checkedDatasets.clear();
+    emptyPositions.clear();
+    document.getElementById('groups-section').style.display   = 'none';
+    document.getElementById('datasets-section').style.display = 'none';
+    document.getElementById('sf-section').style.display       = 'none';
+    document.getElementById('grid-section').style.display     = 'none';
+    document.getElementById('groups-list').innerHTML           = '';
+    document.getElementById('datasets-grid').innerHTML         = '';
+    document.getElementById('btn-download-sf').style.display   = 'none';
+    const sfInp = document.getElementById('sf-parent-path');
+    sfInp.value = ''; sfInp.dataset.auto = 'true';
+
+    const panel = document.getElementById('convert-panel');
+    panel.style.display = 'flex';
+    ensureInVFS().then(() => loadAndRenderSidebar(vfsPath, 'cp')).catch(() => {});
+  };
+
+  // ── HDF5 sidebar (file structure tree) ──────────────────────────────────────
+  // Loads the file tree via C++ get_file_tree and renders it into the sidebar.
+  // `which` is 'cp' (convert panel) or 'bp' (build panel).
+  let sbSelectedPath = { cp: null, bp: null };
+
+  function loadAndRenderSidebar(vfsPath, which) {
+    const treeEl = document.getElementById(which + '-tree');
+    treeEl.innerHTML = '<div class="sb-empty" style="color:#484f58">Loading…</div>';
+    document.getElementById(which + '-actions').style.display = 'none';
+    sbSelectedPath[which] = null;
+    try {
+      const ptr  = Module.ccall('get_file_tree', 'number', ['string'], [vfsPath]);
+      const root = JSON.parse(Module.UTF8ToString(ptr));
+      Module._free_result(ptr);
+      if (!root) { treeEl.innerHTML = '<div class="sb-empty">Could not read file structure.</div>'; return; }
+      treeEl.innerHTML = '';
+      renderSbNode(root, treeEl, which, 0);
+    } catch(e) {
+      treeEl.innerHTML = '<div class="sb-empty">Error loading structure.</div>';
+    }
+  }
+
+  const sbOpenState = {};  // tracks which group paths are expanded
+
+  function renderSbNode(node, parent, which, depth) {
+    const isGroup = node.type === 'group';
+    const hasChildren = isGroup && node.children && node.children.length > 0;
+
+    const row = document.createElement('div');
+    row.className = 'sbn' + (isGroup ? '' : ' sbn-ds');
+    row.style.paddingLeft = (depth * 12) + 'px';
+
+    // Groups: ▶ arrow (CSS-rotates on .open), same as .gi in explore().
+    // Datasets: empty span (no arrow), ◆ icon same as .di in explore().
+    const arrow = document.createElement('span');
+    arrow.className = 'sbn-toggle';
+    arrow.textContent = isGroup ? '▶' : '';
+
+    const icon = document.createElement('span');
+    icon.className = 'sbn-icon';
+    icon.textContent = isGroup ? '' : '◆';
+
+    const label = document.createElement('span');
+    label.className = 'sbn-name';
+    label.textContent = node.name === '/' ? '/ (root)' : node.name;
+    label.title = node.path;
+
+    row.appendChild(arrow);
+    row.appendChild(icon);
+    row.appendChild(label);
+    parent.appendChild(row);
+
+    // Children container — auto-expand root + one level deep
+    let childContainer = null;
+    if (hasChildren) {
+      childContainer = document.createElement('div');
+      const isOpen = sbOpenState[node.path] !== false && depth <= 1;
+      childContainer.style.display = isOpen ? 'block' : 'none';
+      if (isOpen) arrow.classList.add('open');
+      node.children.forEach(ch => renderSbNode(ch, childContainer, which, depth + 1));
+      parent.appendChild(childContainer);
+    }
+
+    row.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      if (hasChildren && childContainer) {
+        const open = childContainer.style.display !== 'none';
+        childContainer.style.display = open ? 'none' : 'block';
+        arrow.classList.toggle('open', !open);
+        sbOpenState[node.path] = !open;
+      }
+      // Select + show action strip
+      document.querySelectorAll('#' + which + '-tree .sbn.sel').forEach(el => el.classList.remove('sel'));
+      row.classList.add('sel');
+      sbSelectedPath[which] = node.path;
+      const pathEl = document.getElementById(which + '-sel-path');
+      pathEl.textContent = node.path;
+      pathEl.title       = node.path;
+      document.getElementById(which + '-actions').style.display = 'block';
+    });
+  }
+
+  // Fill the appropriate path input from the sidebar selection.
+  window.useSbPath = function(which, target) {
+    const path = sbSelectedPath[which];
+    if (!path) return;
+    if (which === 'cp') {
+      if (target === 'pos') {
+        // Treat as a group selection (same as clicking a group in the search results)
+        selectGroup(path);
+      } else {
+        const inp = document.getElementById('sf-parent-path');
+        inp.value = path;
+        inp.dataset.auto = 'false';
+      }
+    } else {
+      if (target === 'pos') {
+        document.getElementById('bp-pos-path').value = path;
+      } else {
+        document.getElementById('bp-sf-parent').value = path;
+      }
+    }
+  };
+
+  // Auto-fills the SF parent path input when a positions group is selected.
+  function updateSFParentPath() {
+    const inp = document.getElementById('sf-parent-path');
+    if (!inp.value || inp.dataset.auto === 'true') {
+      if (!selectedGroup) { inp.value = ''; return; }
+      const idx = selectedGroup.lastIndexOf('/');
+      inp.value = idx <= 0 ? '/' : selectedGroup.slice(0, idx);
+      inp.dataset.auto = 'true';
+    }
+  }
+  // Once the user edits the field manually, stop auto-filling it.
+  document.getElementById('sf-parent-path').addEventListener('input', function() {
+    this.dataset.auto = 'false';
+  });
+
+  window.goBack = function() {
+    removeFromVFS();
+    if (typeof tmplVfsPath !== 'undefined' && tmplVfsPath) {
+      try { Module.FS.unlink(tmplVfsPath); } catch(_) {}
+      tmplVfsPath = null;
+    }
+    // Reset sidebars
+    ['cp','bp'].forEach(w => {
+      const t = document.getElementById(w+'-tree');
+      if (t) t.innerHTML = '<div class="sb-empty">' + (w === 'cp' ? 'Load an HDF5 file to see its structure here.' : 'Load a reference .f5 to browse its structure here.') + '</div>';
+      const a = document.getElementById(w+'-actions');
+      if (a) a.style.display = 'none';
+      sbSelectedPath[w] = null;
+    });
+    document.getElementById('convert-panel').style.display = 'none';
+    document.getElementById('build-panel').style.display   = 'none';
+    document.getElementById('result-frame').style.display  = 'none';
+    document.getElementById('result-frame').srcdoc         = '';
+    document.getElementById('explore-back').style.display  = 'none';
+    document.getElementById('upload-screen').style.display = 'flex';
+  };
+
+  // ── Step 1: Search groups ────────────────────────────────────────────────────
+  window.searchGroups = async function() {
+    const gname = document.getElementById('group-name-input').value.trim();
+    if (!gname) return;
+
+    const btn = document.querySelector('#search-row .pill-btn');
+    btn.disabled = true; btn.textContent = 'Searching…';
+
+    try {
+      await ensureInVFS();
+      const ptr  = Module.ccall('find_groups', 'number', ['string', 'string'], [vfsPath, gname]);
+      const json = Module.UTF8ToString(ptr);
+      Module._free_result(ptr);
+      const groups = JSON.parse(json);
+
+      const list    = document.getElementById('groups-list');
+      const section = document.getElementById('groups-section');
+      list.innerHTML = '';
+      selectedGroup  = null;
+      document.getElementById('datasets-section').style.display = 'none';
+      document.getElementById('grid-section').style.display     = 'none';
+
+      if (groups.length === 0) {
+        list.innerHTML = '<div id="no-groups">No groups named "' + e(gname) + '" found.</div>';
+      } else {
+        groups.forEach(path => {
+          const item = document.createElement('div');
+          item.className   = 'group-item';
+          item.dataset.path = path;
+          item.innerHTML   = '<div class="group-dot"></div><span>' + e(path) + '</span>';
+          item.onclick     = () => selectGroup(path);
+          list.appendChild(item);
+        });
+      }
+      section.style.display = 'block';
+    } catch (err) {
+      showError('Error searching groups: ' + err.message);
+    } finally {
+      btn.disabled = false; btn.textContent = 'Search';
+    }
+  };
+
+  // ── Step 2: Select group ─────────────────────────────────────────────────────
+  async function selectGroup(path) {
+    document.querySelectorAll('.group-item').forEach(el => {
+      el.classList.toggle('selected', el.dataset.path === path);
+    });
+    selectedGroup = path;
+
+    try {
+      const ptr  = Module.ccall('get_datasets', 'number', ['string', 'string'], [vfsPath, path]);
+      const json = Module.UTF8ToString(ptr);
+      Module._free_result(ptr);
+      allDatasets = JSON.parse(json);
+      checkedDatasets = new Set(allDatasets); // select all by default
+
+      renderDatasets();
+      document.getElementById('datasets-section').style.display = 'block';
+      updateSFParentPath();
+      updateGridSection();
+    } catch (err) {
+      showError('Error loading datasets: ' + err.message);
+    }
+  }
+
+  // ── Step 3: Dataset checkboxes ────────────────────────────────────────────────
+  function renderDatasets() {
+    const grid = document.getElementById('datasets-grid');
+    grid.innerHTML = '';
+    allDatasets.forEach(name => {
+      const chip = document.createElement('label');
+      chip.className = 'ds-chip' + (checkedDatasets.has(name) ? ' checked' : '');
+      chip.innerHTML = '<input type="checkbox"' + (checkedDatasets.has(name) ? ' checked' : '') + '>'
+                     + e(name);
+      chip.querySelector('input').onchange = ev => {
+        ev.target.checked ? checkedDatasets.add(name) : checkedDatasets.delete(name);
+        chip.classList.toggle('checked', ev.target.checked);
+        updateSelCount();
+        updateGridSection();
+      };
+      grid.appendChild(chip);
+    });
+    updateSelCount();
+  }
+
+  function updateSelCount() {
+    const n = checkedDatasets.size;
+    document.getElementById('sel-count').textContent = n + ' selected';
+  }
+
+  window.selAll = function(checked) {
+    if (checked) checkedDatasets = new Set(allDatasets);
+    else         checkedDatasets.clear();
+    emptyPositions.clear();
+    renderDatasets();
+    updateGridSection();
+  };
+
+  // ── Step 4: Grid layout ───────────────────────────────────────────────────────
+  function updateGridSection() {
+    const hasSel = checkedDatasets.size > 0;
+    document.getElementById('sf-section').style.display      = hasSel ? 'block' : 'none';
+    document.getElementById('grid-section').style.display    = hasSel ? 'block' : 'none';
+    document.getElementById('btn-download-sf').style.display = hasSel ? 'inline-block' : 'none';
+    if (hasSel) {
+      // Auto-fill cols when entering the grid section fresh
+      const n    = checkedDatasets.size;
+      const rows = Math.max(1, parseInt(document.getElementById('grid-rows').value) || 1);
+      const colsEl = document.getElementById('grid-cols');
+      if (!colsEl.value || parseInt(colsEl.value) < 1)
+        colsEl.value = Math.ceil(n / rows);
+      emptyPositions.clear();
+      updateGridInfo();
+    }
+  }
+
+  // Called when user edits rows or cols directly.
+  window.onGridDimInput = function(which) {
+    const n    = checkedDatasets.size;
+    const rows = Math.max(1, parseInt(document.getElementById('grid-rows').value) || 1);
+    const cols = Math.max(1, parseInt(document.getElementById('grid-cols').value) || 1);
+    // If user changes rows, auto-update cols to fit all datasets (unless cols is already bigger)
+    if (which === 'rows') {
+      const minCols = Math.ceil(n / rows);
+      if (cols < minCols) document.getElementById('grid-cols').value = minCols;
+    }
+    // Any dim change clears empty markings to avoid stale state
+    emptyPositions.clear();
+    updateGridInfo();
+  };
+
+  window.updateGridInfo = function() {
+    const n    = checkedDatasets.size;
+    const rows = Math.max(1, parseInt(document.getElementById('grid-rows').value) || 1);
+    const cols = Math.max(1, parseInt(document.getElementById('grid-cols').value) || 1);
+    const total = rows * cols;
+    const nEmpty = emptyPositions.size;
+    document.getElementById('grid-info').textContent =
+      '(' + total + ' tiles, ' + (total - nEmpty) + ' filled, ' + nEmpty + ' empty)';
+    renderTileGrid(rows, cols, n);
+  };
+
+  function renderTileGrid(rows, cols, n) {
+    const container = document.getElementById('tile-grid');
+    container.style.gridTemplateColumns = 'repeat(' + cols + ', 38px)';
+    container.innerHTML = '';
+    const ordered = allDatasets.filter(d => checkedDatasets.has(d));
+    let dsIdx = 0;
+    for (let i = 0; i < rows; i++) {
+      for (let j = 0; j < cols; j++) {
+        const pos   = i * cols + j;
+        const cell  = document.createElement('div');
+        const isEmpty = emptyPositions.has(pos) || dsIdx >= ordered.length;
+        cell.className = 'tg-cell ' + (isEmpty ? 'empty' : 'filled');
+        cell.title = 'tile ' + i + ',' + j + (isEmpty ? ' — empty' : ' — ' + ordered[dsIdx]);
+        if (isEmpty) {
+          cell.textContent = '∅';
+        } else {
+          cell.textContent = '#' + (dsIdx + 1);
+          dsIdx++;
+        }
+        // Only allow toggling positions that are within the dataset range
+        if (pos < ordered.length + emptyPositions.size || emptyPositions.has(pos)) {
+          cell.addEventListener('click', (function(p, isEmpty_) {
+            return function() {
+              if (isEmpty_) emptyPositions.delete(p);
+              else          emptyPositions.add(p);
+              updateGridInfo();
+            };
+          })(pos, isEmpty));
+        }
+        container.appendChild(cell);
+      }
+    }
+  }
+
+  // ── Step 4: Download ──────────────────────────────────────────────────────────
+  const VFS_OUT = '/tiles_out.bin';
+
+  // Builds a rows×cols array of dataset names, with null for empty positions.
+  function buildGridArray(rows, cols) {
+    const ordered = allDatasets.filter(d => checkedDatasets.has(d));
+    const grid = [];
+    let dsIdx = 0;
+    for (let i = 0; i < rows; i++)
+      for (let j = 0; j < cols; j++) {
+        const pos = i * cols + j;
+        if (emptyPositions.has(pos) || dsIdx >= ordered.length) grid.push(null);
+        else grid.push(ordered[dsIdx++]);
+      }
+    return grid;
+  }
+
+  window.doDownload = async function() {
+    const n = checkedDatasets.size;
+    if (!selectedGroup || n === 0) return;
+
+    const rows = Math.max(1, parseInt(document.getElementById('grid-rows').value) || 1);
+    const cols = Math.max(1, parseInt(document.getElementById('grid-cols').value) || 1);
+    const grid = buildGridArray(rows, cols);
+
+    const statusDiv = document.getElementById('convert-status');
+    const btn       = document.getElementById('btn-download');
+    statusDiv.style.display = 'flex';
+    btn.disabled = true;
+    document.getElementById('convert-status-text').textContent = 'Converting ' + n + ' datasets…';
+
+    try {
+      await ensureInVFS();
+      await new Promise(r => setTimeout(r, 0));
+
+      const written = Module.ccall(
+        'convert_to_binary_file', 'number',
+        ['string', 'string', 'string', 'number', 'number', 'string'],
+        [vfsPath, selectedGroup, JSON.stringify(grid), rows, cols, VFS_OUT]
+      );
+
+      if (written <= 0) {
+        showConvertError(written === 0
+          ? 'Conversion produced no data — check that the datasets contain compound {x,y,z} data.'
+          : 'Conversion failed — could not read datasets from the selected group.');
+        return;
+      }
+
+      const bytes = Module.FS.readFile(VFS_OUT);
+      try { Module.FS.unlink(VFS_OUT); } catch(_) {}
+
+      // Trigger download
+      const blob = new Blob([bytes], { type: 'application/octet-stream' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = 'tiles.bin';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    } catch (err) {
+      showConvertError('Unexpected error: ' + err.message);
+    } finally {
+      statusDiv.style.display = 'none';
+      btn.disabled = false;
+    }
+  };
+
+  // ── Download sf.bin ───────────────────────────────────────────────────────────
+  const VFS_SF_OUT = '/sf_out.bin';
+
+  window.doDownloadSF = async function() {
+    const n = checkedDatasets.size;
+    if (!selectedGroup || n === 0) return;
+
+    const rows   = Math.max(1, parseInt(document.getElementById('grid-rows').value) || 1);
+    const cols   = Math.max(1, parseInt(document.getElementById('grid-cols').value) || 1);
+    const grid   = buildGridArray(rows, cols);
+
+    const statusDiv = document.getElementById('convert-status');
+    const btn       = document.getElementById('btn-download-sf');
+    statusDiv.style.display = 'flex';
+    btn.disabled = true;
+    document.getElementById('convert-status-text').textContent = 'Exporting shape factors…';
+
+    try {
+      await ensureInVFS();
+      await new Promise(r => setTimeout(r, 0));
+
+      const dsL    = document.getElementById('sf-field-l').value.trim() || 'Linear';
+      const dsP    = document.getElementById('sf-field-p').value.trim() || 'Planarity';
+      const dsS    = document.getElementById('sf-field-s').value.trim() || 'Spherical';
+      const sfPath = document.getElementById('sf-parent-path').value.trim() || '/';
+
+      // Signature: h5path, datasets_json, rows, cols,
+      //            sf_parent, grp_l, grp_p, grp_s, out_path
+      const written = Module.ccall(
+        'convert_sf_to_binary_file', 'number',
+        ['string','string','number','number','string','string','string','string','string'],
+        [vfsPath, JSON.stringify(grid), rows, cols,
+         sfPath, dsL, dsP, dsS, VFS_SF_OUT]
+      );
+
+      if (written <= 0) {
+        showConvertError(written === 0
+          ? 'Shape factors group produced no data — check field names and dataset structure.'
+          : 'Failed to read shape factors from the selected group.');
+        return;
+      }
+
+      const bytes = Module.FS.readFile(VFS_SF_OUT);
+      try { Module.FS.unlink(VFS_SF_OUT); } catch(_) {}
+
+      const blob = new Blob([bytes], { type: 'application/octet-stream' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = 'sf.bin';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    } catch (err) {
+      showConvertError('Unexpected error: ' + err.message);
+    } finally {
+      statusDiv.style.display = 'none';
+      btn.disabled = false;
+    }
+  };
+
+  function showConvertError(msg) {
+    let el = document.getElementById('convert-error');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'convert-error';
+      el.style.cssText = 'background:#2d1515;border:1px solid #f8514930;border-radius:8px;padding:12px 20px;font-size:13px;color:#ff7b72;margin-top:8px';
+      document.getElementById('grid-section').appendChild(el);
+    }
+    el.textContent = msg;
+    el.style.display = 'block';
+    setTimeout(() => { el.style.display = 'none'; }, 6000);
+  }
+
+  // ── Build HDF5 mode ──────────────────────────────────────────────────────────
+  let posBinFile  = null;
+  let sfBinFile   = null;
+  let tmplVfsPath = null;
+
+  const VFS_TMPL    = '/tmpl.h5';
+  const VFS_POS_BIN = '/pos_in.bin';
+  const VFS_SF_BIN  = '/sf_in.bin';
+  const VFS_BP_OUT  = '/build_out.h5';
+
+  window.doBuild = function() {
+    errBanner.style.display = 'none';
+    document.getElementById('upload-screen').style.display = 'none';
+
+    posBinFile = null; sfBinFile = null;
+    if (tmplVfsPath) { try { Module.FS.unlink(tmplVfsPath); } catch(_) {} tmplVfsPath = null; }
+
+    document.getElementById('pos-drop').classList.remove('has-file');
+    document.getElementById('pos-drop-name').textContent = '';
+    document.getElementById('sf-drop').classList.remove('has-file');
+    document.getElementById('sf-drop-name').textContent  = '';
+    document.getElementById('tmpl-name').style.display        = 'none';
+    document.getElementById('tmpl-search-area').style.display = 'none';
+    document.getElementById('tmpl-results').innerHTML         = '';
+    document.getElementById('bp-ds-names').value        = '';
+    document.getElementById('bp-name-count').value      = '';
+    document.getElementById('bp-rows').value            = '1';
+    document.getElementById('bp-cols').textContent      = '—';
+    document.getElementById('bp-grid-info').textContent = '';
+    document.getElementById('bp-out-name').value        = 'tile';
+
+    if (currentFile) {
+      const isBin = currentFile.name.toLowerCase().endsWith('.bin');
+      document.getElementById('bp-subtitle').textContent = currentFile.name;
+      if (isBin) {
+        posBinFile = currentFile;
+        document.getElementById('pos-drop').classList.add('has-file');
+        document.getElementById('pos-drop-name').textContent = currentFile.name;
+      } else {
+        loadTemplateFile(currentFile);
+      }
+    } else {
+      document.getElementById('bp-subtitle').textContent = '';
+    }
+
+    document.getElementById('build-panel').style.display = 'flex';
+  };
+
+  window.onBinFile = async function(ev, which) {
+    const file = ev.target.files[0];
+    if (!file) return;
+    if (which === 'pos') {
+      posBinFile = file;
+      document.getElementById('pos-drop').classList.add('has-file');
+      document.getElementById('pos-drop-name').textContent = file.name;
+    } else {
+      sfBinFile = file;
+      document.getElementById('sf-drop').classList.add('has-file');
+      document.getElementById('sf-drop-name').textContent = file.name;
+    }
+
+    // Scan the binary to derive tile count and grid dimensions automatically
+    const VFS_SCAN = '/scan_tmp.bin';
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      Module.FS.writeFile(VFS_SCAN, bytes);
+      const ptr  = Module.ccall('scan_bin_tiles', 'number', ['string'], [VFS_SCAN]);
+      const info = JSON.parse(Module.UTF8ToString(ptr));
+      Module._free_result(ptr);
+      try { Module.FS.unlink(VFS_SCAN); } catch(_) {}
+
+      if (info.count > 0) {
+        document.getElementById('bp-name-count').value = info.count;
+        document.getElementById('bp-rows').value = info.rows;
+        updateBuildGrid();
+        // Auto-generate names if none are set yet
+        if (!document.getElementById('bp-ds-names').value.trim()) {
+          const prefix = document.getElementById('bp-name-prefix').value.trim() || 'tile';
+          const names = [];
+          for (let r = 0; r < info.rows; r++)
+            for (let c = 0; c < info.cols && names.length < info.count; c++)
+              names.push(prefix + '_' + r + 'x' + c);
+          document.getElementById('bp-ds-names').value = JSON.stringify(names);
+          updateBuildGrid();
+        }
+      }
+    } catch(e) {
+      try { Module.FS.unlink(VFS_SCAN); } catch(_) {}
+    }
+  };
+
+  window.onTemplateFile = function(ev) {
+    const file = ev.target.files[0];
+    if (file) loadTemplateFile(file);
+  };
+
+  async function loadTemplateFile(file) {
+    if (tmplVfsPath) { try { Module.FS.unlink(tmplVfsPath); } catch(_) {} }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    Module.FS.writeFile(VFS_TMPL, bytes);
+    tmplVfsPath = VFS_TMPL;
+    document.getElementById('tmpl-name').textContent    = '✓ ' + file.name;
+    document.getElementById('tmpl-name').style.display  = 'inline';
+    document.getElementById('tmpl-search-area').style.display = 'flex';
+    loadAndRenderSidebar(VFS_TMPL, 'bp');
+  }
+
+  window.searchTmplGroups = function() {
+    if (!tmplVfsPath) return;
+    const gname = document.getElementById('tmpl-search-input').value.trim();
+    if (!gname) return;
+    const ptr    = Module.ccall('find_groups', 'number', ['string','string'], [tmplVfsPath, gname]);
+    const groups = JSON.parse(Module.UTF8ToString(ptr));
+    Module._free_result(ptr);
+    // Results are already in BFS order (shortest-path-first) from find_groups().
+    // No re-sorting — let the user choose the right one.
+
+    const box = document.getElementById('tmpl-results');
+    box.innerHTML = '';
+    if (groups.length === 0) {
+      box.innerHTML = '<div style="font-size:12px;color:#7d8590;padding:4px">No groups found.</div>';
+      return;
+    }
+    groups.forEach(path => {
+      const row = document.createElement('div');
+      row.className = 'tmpl-result-item';
+      row.innerHTML =
+        '<span style="font-family:monospace;font-size:12px;color:#a5d6ff;overflow:hidden;text-overflow:ellipsis">' + e(path) + '</span>'
+        + '<div style="display:flex;gap:4px;flex-shrink:0">'
+        + '<button class="use-for-btn" data-path="' + e(path) + '" data-for="pos" onclick="useTmplPath(this)">→ Positions path</button>'
+        + '<button class="use-for-btn sf" data-path="' + e(path) + '" data-for="sf"  onclick="useTmplPath(this)">→ SF parent</button>'
+        + '</div>';
+      box.appendChild(row);
+    });
+  };
+
+  window.useTmplPath = function(btn) {
+    const path = btn.dataset.path;
+    if (btn.dataset.for === 'pos') {
+      document.getElementById('bp-pos-path').value = path;
+    } else {
+      const idx = path.lastIndexOf('/');
+      document.getElementById('bp-sf-parent').value = idx <= 0 ? '/' : path.slice(0, idx);
+    }
+  };
+
+  window.generateBpNames = function() {
+    const prefix = document.getElementById('bp-name-prefix').value.trim() || 'tile';
+    const rows   = Math.max(1, parseInt(document.getElementById('bp-rows').value) || 1);
+    // Prefer auto-detected count; fall back to manually entered count
+    let count = parseInt(document.getElementById('bp-name-count').value) || 0;
+    if (count <= 0) {
+      // Try to derive from existing names array length
+      try { const arr = JSON.parse(document.getElementById('bp-ds-names').value); count = arr.length; } catch(_) {}
+    }
+    if (count <= 0) { showBuildError('Drop a .bin file first (or enter a tile count) to generate names.'); return; }
+    const cols  = Math.ceil(count / rows);
+    const names = [];
+    for (let r = 0; r < rows; r++)
+      for (let c = 0; c < cols && names.length < count; c++)
+        names.push(prefix + '_' + r + 'x' + c);
+    document.getElementById('bp-ds-names').value = JSON.stringify(names);
+    updateBuildGrid();
+  };
+
+  window.updateBuildGrid = function() {
+    const json = document.getElementById('bp-ds-names').value.trim();
+    let n = 0;
+    try { const arr = JSON.parse(json); n = Array.isArray(arr) ? arr.length : 0; } catch(_) {}
+    const rows = Math.max(1, parseInt(document.getElementById('bp-rows').value) || 1);
+    const cols = n > 0 ? Math.ceil(n / rows) : 0;
+    document.getElementById('bp-cols').textContent      = cols || '—';
+    document.getElementById('bp-grid-info').textContent = n > 0 ? '(' + n + ' datasets)' : '';
+  };
+
+  window.doBuildDownload = async function() {
+    if (!posBinFile && !sfBinFile) {
+      showBuildError('Load at least one binary file — Positions .bin or Shape Factors .bin.');
+      return;
+    }
+    const jsonStr = document.getElementById('bp-ds-names').value.trim();
+    let names;
+    try { names = JSON.parse(jsonStr); } catch(_) { names = null; }
+    if (!Array.isArray(names) || names.length === 0) {
+      showBuildError('Please enter a valid JSON array of dataset names.');
+      return;
+    }
+
+    const rows = Math.max(1, parseInt(document.getElementById('bp-rows').value) || 1);
+    const cols = Math.ceil(names.length / rows);
+
+    const statusDiv = document.getElementById('build-status');
+    const btn       = document.getElementById('btn-build-dl');
+    statusDiv.style.display = 'flex';
+    btn.disabled = true;
+    document.getElementById('build-status-text').textContent = 'Building HDF5…';
+
+    try {
+      if (posBinFile) Module.FS.writeFile(VFS_POS_BIN, new Uint8Array(await posBinFile.arrayBuffer()));
+      if (sfBinFile)  Module.FS.writeFile(VFS_SF_BIN,  new Uint8Array(await sfBinFile.arrayBuffer()));
+      await new Promise(r => setTimeout(r, 0));
+
+      const posPath  = document.getElementById('bp-pos-path').value.trim()  || '/Positions';
+      const sfParent = document.getElementById('bp-sf-parent').value.trim() || '/';
+      const sfL      = document.getElementById('bp-sf-l').value.trim() || 'Linear';
+      const sfP      = document.getElementById('bp-sf-p').value.trim() || 'Planarity';
+      const sfS      = document.getElementById('bp-sf-s').value.trim() || 'Spherical';
+
+      const ret = Module.ccall(
+        'convert_bins_to_hdf5', 'number',
+        ['string','string','string','number','number','string','string','string','string','string','string'],
+        [posBinFile ? VFS_POS_BIN : '', sfBinFile ? VFS_SF_BIN : '',
+         JSON.stringify(names), rows, cols,
+         posPath, sfParent, sfL, sfP, sfS, VFS_BP_OUT]
+      );
+
+      if (posBinFile) { try { Module.FS.unlink(VFS_POS_BIN); } catch(_) {} }
+      if (sfBinFile)  { try { Module.FS.unlink(VFS_SF_BIN);  } catch(_) {} }
+
+      if (ret < 0)  { showBuildError('Build failed — could not process binary files.'); return; }
+      if (ret === 0){ showBuildError('No data written — check binary files and dataset names.'); return; }
+
+      const bytes = Module.FS.readFile(VFS_BP_OUT);
+      try { Module.FS.unlink(VFS_BP_OUT); } catch(_) {}
+
+      const outName = (document.getElementById('bp-out-name').value.trim() || 'output') + '.h5';
+      const blob = new Blob([bytes], { type: 'application/octet-stream' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url; a.download = outName;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    } catch (err) {
+      if (posBinFile) { try { Module.FS.unlink(VFS_POS_BIN); } catch(_) {} }
+      if (sfBinFile)  { try { Module.FS.unlink(VFS_SF_BIN);  } catch(_) {} }
+      showBuildError('Unexpected error: ' + err.message);
+    } finally {
+      statusDiv.style.display = 'none';
+      btn.disabled = false;
+    }
+  };
+
+  function showBuildError(msg) {
+    let el = document.getElementById('build-error');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'build-error';
+      el.style.cssText = 'background:#2d1515;border:1px solid #f8514930;border-radius:8px;padding:12px 20px;font-size:13px;color:#ff7b72;margin-top:8px';
+      document.getElementById('bp-body').appendChild(el);
+    }
+    el.textContent = msg;
+    el.style.display = 'block';
+    setTimeout(() => { el.style.display = 'none'; }, 6000);
+  }
+
+  // ── Utility ───────────────────────────────────────────────────────────────────
+  function e(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+}).catch(err => {
+  document.getElementById('wasm-loading').innerHTML =
+    '<div style="color:#ff7b72;font-size:14px">Failed to load WASM module: ' + err + '</div>';
+});
+</script>
+</body>
+</html>

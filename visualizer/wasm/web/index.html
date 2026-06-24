@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Grid Visualizer</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+  background:#0d1117;color:#e6edf3;
+  min-height:100vh;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+}
+
+/* ── Upload screen ── */
+#upload-screen{
+  display:flex;flex-direction:column;align-items:center;gap:28px;
+  padding:40px;max-width:520px;width:100%;
+}
+
+h1{font-size:28px;font-weight:700;letter-spacing:-.5px}
+h1 span{color:#3fb950}
+
+.subtitle{font-size:14px;color:#7d8590;text-align:center;line-height:1.6}
+
+.file-row{
+  width:100%;display:flex;flex-direction:column;gap:6px;
+}
+.file-label{
+  font-size:12px;font-weight:600;text-transform:uppercase;
+  letter-spacing:.08em;color:#7d8590;
+}
+.file-label span{color:#3fb950;font-weight:700}
+
+.drop-zone{
+  width:100%;border:2px dashed #30363d;border-radius:10px;
+  padding:28px 24px;text-align:center;cursor:pointer;
+  transition:border-color .2s,background .2s;position:relative;
+}
+.drop-zone:hover,.drop-zone.drag-over{
+  border-color:#3fb950;background:#12261e20;
+}
+.drop-zone.has-file{
+  border-color:#238636;background:#12261e30;
+}
+.drop-zone input[type=file]{
+  position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;
+}
+.drop-icon{font-size:32px;display:block;margin-bottom:8px;opacity:.5}
+.drop-title{font-size:14px;font-weight:600;margin-bottom:4px}
+.drop-hint{font-size:11px;color:#7d8590}
+.drop-filename{font-size:12px;color:#3fb950;margin-top:4px;word-break:break-all}
+
+#btn-visualize{
+  width:100%;padding:12px;border-radius:8px;
+  background:#238636;color:#e6edf3;border:none;
+  font-size:14px;font-weight:600;cursor:pointer;
+  transition:background .2s;
+}
+#btn-visualize:hover:not(:disabled){background:#2ea043}
+#btn-visualize:disabled{background:#21262d;color:#484f58;cursor:not-allowed}
+
+/* ── Status ── */
+#status{
+  display:none;flex-direction:column;align-items:center;gap:16px;
+  font-size:14px;color:#7d8590;
+}
+.spinner{
+  width:36px;height:36px;border:3px solid #21262d;
+  border-top-color:#3fb950;border-radius:50%;
+  animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Error ── */
+#error-banner{
+  display:none;background:#2d1515;border:1px solid #f8514930;
+  border-radius:8px;padding:12px 20px;
+  font-size:13px;color:#ff7b72;max-width:480px;text-align:center;
+}
+
+/* ── Result frame ── */
+#result-frame{display:none;width:100vw;height:100vh;border:none;position:fixed;inset:0}
+
+/* ── WASM loading overlay ── */
+#wasm-loading{
+  position:fixed;inset:0;background:#0d1117;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:16px;z-index:100;font-size:13px;color:#7d8590;transition:opacity .3s;
+}
+</style>
+</head>
+<body>
+
+<div id="wasm-loading">
+  <div class="spinner"></div>
+  <span>Loading WASM module…</span>
+</div>
+
+<div id="upload-screen" style="display:none">
+  <h1>Grid <span>Visualizer</span></h1>
+  <p class="subtitle">
+    Interactive 3D point-cloud viewer for binary grid files.<br>
+    Runs entirely in the browser — your files never leave your machine.
+  </p>
+
+  <div class="file-row">
+    <div class="file-label">Tiles file <span>*</span></div>
+    <div class="drop-zone" id="dz-tiles">
+      <input type="file" id="input-tiles">
+      <span class="drop-icon">◈</span>
+      <div class="drop-title">Drop tiles file here</div>
+      <div class="drop-hint">Binary grid file (.bin or any extension)</div>
+      <div class="drop-filename" id="name-tiles"></div>
+    </div>
+  </div>
+
+  <div class="file-row">
+    <div class="file-label">Shape factors file <span style="color:#7d8590;font-weight:400">(optional)</span></div>
+    <div class="drop-zone" id="dz-sf">
+      <input type="file" id="input-sf">
+      <span class="drop-icon">◇</span>
+      <div class="drop-title">Drop shape factors file here</div>
+      <div class="drop-hint">Provides per-point RGB colors</div>
+      <div class="drop-filename" id="name-sf"></div>
+    </div>
+  </div>
+
+  <button id="btn-visualize" disabled onclick="runVisualize()">Visualize</button>
+
+  <div id="error-banner"></div>
+</div>
+
+<div id="status">
+  <div class="spinner"></div>
+  <span id="status-text">Processing…</span>
+</div>
+
+<iframe id="result-frame"></iframe>
+
+<script src="gridvis.js"></script>
+<script>
+createGridVis().then(Module => {
+
+  // ── WASM ready ───────────────────────────────────────────────────────────────
+  document.getElementById('wasm-loading').style.opacity = '0';
+  setTimeout(() => {
+    document.getElementById('wasm-loading').style.display = 'none';
+    document.getElementById('upload-screen').style.display = 'flex';
+  }, 300);
+
+  let tilesFile = null, sfFile = null;
+
+  // ── File inputs ──────────────────────────────────────────────────────────────
+  function setupDropZone(dzId, inputId, nameLabelId, onFile) {
+    const dz    = document.getElementById(dzId);
+    const input = document.getElementById(inputId);
+    const label = document.getElementById(nameLabelId);
+
+    const setFile = file => {
+      onFile(file);
+      label.textContent = file ? file.name : '';
+      if (file) dz.classList.add('has-file');
+      else      dz.classList.remove('has-file');
+      document.getElementById('btn-visualize').disabled = !tilesFile;
+    };
+
+    input.addEventListener('change', e => setFile(e.target.files[0] || null));
+
+    dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag-over'); });
+    dz.addEventListener('dragleave', ()  => dz.classList.remove('drag-over'));
+    dz.addEventListener('drop', e => {
+      e.preventDefault();
+      dz.classList.remove('drag-over');
+      setFile(e.dataTransfer.files[0] || null);
+    });
+  }
+
+  setupDropZone('dz-tiles', 'input-tiles', 'name-tiles', f => tilesFile = f);
+  setupDropZone('dz-sf',    'input-sf',    'name-sf',    f => sfFile    = f);
+
+  // ── Visualize ────────────────────────────────────────────────────────────────
+  const errBanner  = document.getElementById('error-banner');
+  const statusEl   = document.getElementById('status');
+  const statusText = document.getElementById('status-text');
+  const frame      = document.getElementById('result-frame');
+
+  function showError(msg) {
+    document.getElementById('upload-screen').style.display = 'flex';
+    statusEl.style.display = 'none';
+    errBanner.style.display = 'block';
+    errBanner.textContent   = msg;
+  }
+
+  async function loadFileToVFS(file, vfsPath) {
+    const buf   = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    Module.FS.writeFile(vfsPath, bytes);
+  }
+
+  window.runVisualize = async function() {
+    if (!tilesFile) return;
+
+    errBanner.style.display = 'none';
+    document.getElementById('upload-screen').style.display = 'none';
+    statusEl.style.display = 'flex';
+
+    try {
+      statusText.textContent = `Reading ${tilesFile.name}…`;
+      await loadFileToVFS(tilesFile, '/tiles.bin');
+
+      const sfPath = sfFile ? '/sf.bin' : '';
+      if (sfFile) {
+        statusText.textContent = `Reading ${sfFile.name}…`;
+        await loadFileToVFS(sfFile, '/sf.bin');
+      }
+
+      statusText.textContent = 'Building point cloud…';
+      await new Promise(r => setTimeout(r, 0));
+
+      const ptr  = Module.ccall('visualize', 'number', ['string', 'string'], ['/tiles.bin', sfPath]);
+      const html = Module.UTF8ToString(ptr);
+      Module._free_result(ptr);
+
+      try { Module.FS.unlink('/tiles.bin'); } catch(_) {}
+      try { if (sfFile) Module.FS.unlink('/sf.bin'); } catch(_) {}
+
+      if (!html.startsWith('<!DOCTYPE')) {
+        showError(html.replace(/<[^>]*>/g, '').trim());
+        return;
+      }
+
+      statusEl.style.display = 'none';
+      frame.srcdoc = html;
+      frame.style.display = 'block';
+
+    } catch (err) {
+      showError('Unexpected error: ' + err.message);
+    }
+  };
+
+}).catch(err => {
+  document.getElementById('wasm-loading').innerHTML =
+    '<div style="color:#ff7b72;font-size:14px">Failed to load WASM module: ' + err + '</div>';
+});
+</script>
+</body>
+</html>

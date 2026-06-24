@@ -1,14 +1,13 @@
-add_executable(converter ./converter.cpp)  # Replace "main.cpp" with your source files
+add_executable(converter ./converter.cpp)
 
-# Add dependencies
-
-target_include_directories(converter PRIVATE 
+target_include_directories(converter PRIVATE
     ${hdf5_INSTALL_PREFIX}/include
 )
 
 target_link_libraries(converter PRIVATE
-    ${zlib_INSTALL_PREFIX}/lib/libz.a
+    hdf5_cpp
     hdf5
+    ${zlib_INSTALL_PREFIX}/lib/libz.a
 )
 
 add_dependencies(converter hdf5 zlib hdf5_plugins)

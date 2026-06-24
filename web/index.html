@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>HDF5 Tools</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+  background:#0d1117;color:#e6edf3;
+  min-height:100vh;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;padding:40px 24px;
+}
+
+header{text-align:center;margin-bottom:48px}
+h1{font-size:32px;font-weight:700;letter-spacing:-.5px;margin-bottom:10px}
+h1 span{color:#3fb950}
+.tagline{font-size:15px;color:#7d8590;line-height:1.6;max-width:480px}
+
+.cards{
+  display:flex;flex-wrap:wrap;gap:20px;justify-content:center;
+  width:100%;max-width:820px;
+}
+
+.card{
+  flex:1 1 340px;max-width:380px;
+  background:#161b22;border:1px solid #30363d;border-radius:12px;
+  padding:28px 28px 24px;
+  display:flex;flex-direction:column;gap:14px;
+  transition:border-color .15s,transform .15s;
+  text-decoration:none;color:inherit;
+}
+.card:hover{
+  border-color:#3fb950;
+  transform:translateY(-2px);
+}
+
+.card-icon{font-size:28px;line-height:1}
+
+.card-title{
+  font-size:18px;font-weight:700;letter-spacing:-.3px;
+}
+.card-title span{color:#3fb950}
+
+.card-desc{
+  font-size:13px;color:#8b949e;line-height:1.65;flex:1;
+}
+
+.card-features{
+  list-style:none;display:flex;flex-direction:column;gap:5px;
+}
+.card-features li{
+  font-size:12px;color:#7d8590;
+  display:flex;align-items:center;gap:7px;
+}
+.card-features li::before{
+  content:'◆';font-size:7px;color:#3fb950;flex-shrink:0;
+}
+
+.card-cta{
+  margin-top:4px;padding:9px 18px;border-radius:7px;
+  background:#238636;color:#e6edf3;
+  border:none;font-size:13px;font-weight:600;
+  cursor:pointer;text-align:center;
+  transition:background .15s;
+}
+.card:hover .card-cta{background:#2ea043}
+
+footer{
+  margin-top:56px;font-size:11px;color:#484f58;text-align:center;
+  line-height:1.8;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>HDF5 <span>Tools</span></h1>
+  <p class="tagline">Browser-based tooling for HDF5 and binary grid data — no server, no install, compiled to WebAssembly.</p>
+</header>
+
+<div class="cards">
+
+  <a class="card" href="./convert/">
+    <div class="card-icon">⇄</div>
+    <div class="card-title">HDF5 <span>Converter</span></div>
+    <p class="card-desc">
+      Explore HDF5 file structure, convert datasets to binary grid format,
+      and assemble new HDF5 files from binary tiles — all in the browser.
+    </p>
+    <ul class="card-features">
+      <li>Browse HDF5 file structure</li>
+      <li>Convert HDF5 → binary grid</li>
+      <li>Build HDF5 from tiled binary data</li>
+      <li>LZ4-compressed output</li>
+    </ul>
+    <div class="card-cta">Open Converter →</div>
+  </a>
+
+  <a class="card" href="./visualize/">
+    <div class="card-icon">◈</div>
+    <div class="card-title">Grid <span>Visualizer</span></div>
+    <p class="card-desc">
+      Load a binary grid file and render it as a 2-D intensity map directly
+      in the browser. Inspect per-tile point counts at a glance.
+    </p>
+    <ul class="card-features">
+      <li>Renders binary grid files</li>
+      <li>Tile-level point-count heatmap</li>
+      <li>Instant client-side processing</li>
+    </ul>
+    <div class="card-cta">Open Visualizer →</div>
+  </a>
+
+</div>
+
+<footer>
+  Powered by <a href="https://emscripten.org" style="color:#3fb950;text-decoration:none">Emscripten</a> &amp;
+  <a href="https://www.hdfgroup.org/solutions/hdf5/" style="color:#3fb950;text-decoration:none">HDF5</a>.
+  All processing runs locally in your browser.
+</footer>
+
+</body>
+</html>
