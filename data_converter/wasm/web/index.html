@@ -220,9 +220,18 @@ h1 span{color:#3fb950}
 .use-for-btn{background:none;border:1px solid #30363d;border-radius:4px;color:#7d8590;font-size:11px;padding:2px 8px;cursor:pointer;white-space:nowrap;transition:all .15s}
 .use-for-btn:hover{border-color:#1f6feb;color:#58a6ff;background:#111d3a}
 .use-for-btn.sf:hover{border-color:#238636;color:#3fb950;background:#12261e}
+.back-link{
+  position:fixed;top:14px;left:16px;z-index:200;
+  font-size:13px;font-weight:600;color:#7d8590;text-decoration:none;
+  padding:5px 10px;border-radius:6px;border:1px solid #30363d;background:#161b22;
+  transition:color .15s,border-color .15s;
+}
+.back-link:hover{color:#3fb950;border-color:#3fb950}
 </style>
 </head>
 <body>
+
+<a class="back-link" href="../">← HDF5 Tools</a>
 
 <div id="wasm-loading">
   <div class="spinner"></div>

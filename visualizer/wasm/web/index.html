@@ -88,9 +88,18 @@ h1 span{color:#3fb950}
   display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:16px;z-index:100;font-size:13px;color:#7d8590;transition:opacity .3s;
 }
+.back-link{
+  position:fixed;top:14px;left:16px;z-index:200;
+  font-size:13px;font-weight:600;color:#7d8590;text-decoration:none;
+  padding:5px 10px;border-radius:6px;border:1px solid #30363d;background:#161b22;
+  transition:color .15s,border-color .15s;
+}
+.back-link:hover{color:#3fb950;border-color:#3fb950}
 </style>
 </head>
 <body>
+
+<a class="back-link" href="../">← HDF5 Tools</a>
 
 <div id="wasm-loading">
   <div class="spinner"></div>
