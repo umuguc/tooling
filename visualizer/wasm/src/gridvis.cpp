@@ -1,167 +1,204 @@
 #define _USE_MATH_DEFINES
-#include <emscripten.h>
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <emscripten.h>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
-#include <array>
-#include <algorithm>
-#include <limits>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-// ── Binary format (matches binary_io.hpp) ─────────────────────────────────────
-// Each chunk: GridIndex{int x, int y} + int count + count * (3 doubles)
-
-struct GridIndex { int x, y; };
+struct GridIndex {
+  int x, y;
+};
 using P3f = std::array<float, 3>;
 
-std::vector<std::vector<std::vector<P3f>>>
-read_grid(const std::string& path) {
-    std::vector<std::vector<std::vector<P3f>>> grid;
-    std::ifstream f(path, std::ios::binary);
-    if (!f) return grid;
+struct FlatGrid {
+  std::vector<float> pos;
+  std::vector<float> col_tile;
+  std::vector<float> col_sf;
 
-    bool ok = true;
-    while (ok) {
-        GridIndex idx;
-        if (!f.read(reinterpret_cast<char*>(&idx), sizeof(idx))) break;
-        int count;
-        if (!f.read(reinterpret_cast<char*>(&count), sizeof(count))) break;
-        if (idx.x < 0 || idx.y < 0 || count < 0 || count > 10'000'000) break;
+  size_t total = 0;
+  size_t nx = 0, ny = 0;
 
-        size_t xi = (size_t)idx.x, yi = (size_t)idx.y;
-        if (xi >= grid.size())      grid.resize(xi + 1);
-        if (yi >= grid[xi].size())  grid[xi].resize(yi + 1);
-
-        for (int k = 0; k < count; k++) {
-            double buf[3];
-            if (!f.read(reinterpret_cast<char*>(buf), sizeof(double) * 3)) { ok = false; break; }
-            grid[xi][yi].push_back({(float)buf[0], (float)buf[1], (float)buf[2]});
-        }
-    }
-    return grid;
-}
-
-// ── Color utilities ───────────────────────────────────────────────────────────
+  float xmin = 1e30f, ymin = 1e30f, zmin = 1e30f;
+  float xmax = -1e30f, ymax = -1e30f, zmax = -1e30f;
+};
 
 P3f hue_color(size_t i, size_t total) {
-    double h = (total > 0) ? (double)i / (double)total : 0.0;
-    return {
-        (float)((std::sin(h * 2 * M_PI) + 1) * 0.5),
-        (float)((std::sin((h + 1.0/3) * 2 * M_PI) + 1) * 0.5),
-        (float)((std::sin((h + 2.0/3) * 2 * M_PI) + 1) * 0.5)
-    };
+  double h = (total > 0) ? (double)i / (double)total : 0.0;
+  return {(float)((std::sin(h * 2 * M_PI) + 1) * 0.5),
+          (float)((std::sin((h + 1.0 / 3) * 2 * M_PI) + 1) * 0.5),
+          (float)((std::sin((h + 2.0 / 3) * 2 * M_PI) + 1) * 0.5)};
 }
 
-// ── Base64 ────────────────────────────────────────────────────────────────────
+bool read_grid_flat(const std::string &path, FlatGrid &g, bool is_sf,
+                    const FlatGrid *tiles_for_sf_bounds = nullptr) {
+  std::ifstream f(path, std::ios::binary);
+  if (!f)
+    return false;
+
+  size_t total = 0;
+  int max_x = -1, max_y = -1;
+  {
+    while (true) {
+      GridIndex idx;
+      if (!f.read(reinterpret_cast<char *>(&idx), sizeof(idx)))
+        break;
+      int count;
+      if (!f.read(reinterpret_cast<char *>(&count), sizeof(count)))
+        break;
+      if (idx.x < 0 || idx.y < 0 || count < 0 || count > 10'000'000)
+        break;
+      total += (size_t)count;
+      if (idx.x > max_x)
+        max_x = idx.x;
+      if (idx.y > max_y)
+        max_y = idx.y;
+
+      f.seekg((std::streamoff)count * (std::streamoff)(sizeof(double) * 3),
+              std::ios::cur);
+      if (!f)
+        break;
+    }
+  }
+
+  if (total == 0)
+    return true;
+
+  g.total = total;
+  g.nx = (size_t)(max_x + 1);
+  g.ny = (size_t)(max_y + 1);
+
+  if (!is_sf) {
+    g.pos.resize(total * 3);
+    g.col_tile.resize(total * 3);
+    g.col_sf.resize(total * 3, 0.4f);
+  } else {
+    g.col_sf.resize(total * 3, 0.4f);
+  }
+
+  size_t num_tiles = g.nx * g.ny;
+  std::vector<P3f> palette(num_tiles);
+  for (size_t i = 0; i < num_tiles; i++)
+    palette[i] = hue_color(i, num_tiles);
+
+  f.clear();
+  f.seekg(0, std::ios::beg);
+  size_t gi = 0;
+
+  while (true) {
+    GridIndex idx;
+    if (!f.read(reinterpret_cast<char *>(&idx), sizeof(idx)))
+      break;
+    int count;
+    if (!f.read(reinterpret_cast<char *>(&count), sizeof(count)))
+      break;
+    if (idx.x < 0 || idx.y < 0 || count < 0 || count > 10'000'000)
+      break;
+
+    size_t tile_flat = (size_t)idx.x * g.ny + (size_t)idx.y;
+    P3f tc = (tile_flat < palette.size()) ? palette[tile_flat]
+                                          : P3f{0.5f, 0.5f, 0.5f};
+
+    for (int k = 0; k < count && gi < total; k++, gi++) {
+      double buf[3];
+      if (!f.read(reinterpret_cast<char *>(buf), sizeof(double) * 3))
+        goto done;
+
+      if (!is_sf) {
+        g.pos[gi * 3] = (float)buf[0];
+        g.pos[gi * 3 + 1] = (float)buf[1];
+        g.pos[gi * 3 + 2] = (float)buf[2];
+
+        if (g.pos[gi * 3] < g.xmin)
+          g.xmin = g.pos[gi * 3];
+        if (g.pos[gi * 3] > g.xmax)
+          g.xmax = g.pos[gi * 3];
+        if (g.pos[gi * 3 + 1] < g.ymin)
+          g.ymin = g.pos[gi * 3 + 1];
+        if (g.pos[gi * 3 + 1] > g.ymax)
+          g.ymax = g.pos[gi * 3 + 1];
+        if (g.pos[gi * 3 + 2] < g.zmin)
+          g.zmin = g.pos[gi * 3 + 2];
+        if (g.pos[gi * 3 + 2] > g.zmax)
+          g.zmax = g.pos[gi * 3 + 2];
+
+        g.col_tile[gi * 3] = tc[0];
+        g.col_tile[gi * 3 + 1] = tc[1];
+        g.col_tile[gi * 3 + 2] = tc[2];
+      } else {
+        // SF: store as color if in [0,1]
+        float r = (float)buf[0], gr = (float)buf[1], b = (float)buf[2];
+        if (r >= 0 && r <= 1 && gr >= 0 && gr <= 1 && b >= 0 && b <= 1) {
+          g.col_sf[gi * 3] = r;
+          g.col_sf[gi * 3 + 1] = gr;
+          g.col_sf[gi * 3 + 2] = b;
+        }
+      }
+    }
+  }
+done:
+  return true;
+}
 
 static const char B64C[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-std::string b64_encode(const void* data, size_t nbytes) {
-    const uint8_t* p = static_cast<const uint8_t*>(data);
-    std::string r;
-    r.reserve(((nbytes + 2) / 3) * 4);
-    for (size_t i = 0; i < nbytes; i += 3) {
-        uint32_t v = (uint32_t)p[i] << 16;
-        if (i + 1 < nbytes) v |= (uint32_t)p[i + 1] << 8;
-        if (i + 2 < nbytes) v |= (uint32_t)p[i + 2];
-        r += B64C[(v >> 18) & 63];
-        r += B64C[(v >> 12) & 63];
-        r += (i + 1 < nbytes) ? B64C[(v >>  6) & 63] : '=';
-        r += (i + 2 < nbytes) ? B64C[ v         & 63] : '=';
-    }
-    return r;
+void b64_encode_stream(std::ostringstream &out, const void *data,
+                       size_t nbytes) {
+  const uint8_t *p = static_cast<const uint8_t *>(data);
+  for (size_t i = 0; i < nbytes; i += 3) {
+    uint32_t v = (uint32_t)p[i] << 16;
+    if (i + 1 < nbytes)
+      v |= (uint32_t)p[i + 1] << 8;
+    if (i + 2 < nbytes)
+      v |= (uint32_t)p[i + 2];
+    out << B64C[(v >> 18) & 63] << B64C[(v >> 12) & 63]
+        << ((i + 1 < nbytes) ? B64C[(v >> 6) & 63] : '=')
+        << ((i + 2 < nbytes) ? B64C[v & 63] : '=');
+  }
 }
 
-// ── HTML generation ───────────────────────────────────────────────────────────
+std::string generate_html(FlatGrid &tiles, FlatGrid &sf) {
+  size_t total = tiles.total;
+  if (total == 0)
+    return "<html><body "
+           "style='background:#0d1117;color:#ff7b72;padding:2em;font-family:"
+           "sans-serif'>No points found in file.</body></html>";
 
-std::string generate_html(
-    const std::vector<std::vector<std::vector<P3f>>>& tiles,
-    const std::vector<std::vector<std::vector<P3f>>>& sf)
-{
-    // Count total points
-    size_t total = 0;
-    for (auto& row : tiles) for (auto& cell : row) total += cell.size();
-    if (total == 0)
-        return "<html><body style='background:#0d1117;color:#ff7b72;padding:2em;font-family:sans-serif'>No points found in file.</body></html>";
+  size_t nx = tiles.nx;
+  size_t ny = tiles.ny;
+  size_t num_tiles = nx * ny;
+  bool has_sf = (sf.total > 0 && sf.col_sf.size() == total * 3);
 
-    size_t nx       = tiles.size();
-    size_t ny       = (nx > 0) ? tiles[0].size() : 0;
-    size_t num_tiles = nx * ny;
-    bool   has_sf   = !sf.empty();
+  if (has_sf) {
+    tiles.col_sf = std::move(sf.col_sf);
+  }
 
-    // Tile color palette
-    std::vector<P3f> palette(num_tiles);
-    for (size_t i = 0; i < num_tiles; i++) palette[i] = hue_color(i, num_tiles);
+  float cx = (tiles.xmin + tiles.xmax) * 0.5f;
+  float cy = (tiles.ymin + tiles.ymax) * 0.5f;
+  float cz = (tiles.zmin + tiles.zmax) * 0.5f;
+  float scale = std::max({tiles.xmax - tiles.xmin, tiles.ymax - tiles.ymin,
+                          tiles.zmax - tiles.zmin, 1e-6f});
+  for (size_t i = 0; i < total; i++) {
+    tiles.pos[i * 3] = (tiles.pos[i * 3] - cx) / scale * 2.0f;
+    tiles.pos[i * 3 + 1] = (tiles.pos[i * 3 + 1] - cy) / scale * 2.0f;
+    tiles.pos[i * 3 + 2] = (tiles.pos[i * 3 + 2] - cz) / scale * 2.0f;
+  }
 
-    // Flatten point data into parallel arrays
-    std::vector<float> pos(total * 3);
-    std::vector<float> col_tile(total * 3);
-    std::vector<float> col_sf(total * 3);
+  std::ostringstream o;
+  o.str().reserve(tiles.pos.size() * sizeof(float) *
+                  6); // rough estimate for b64
 
-    float xmin =  1e30f, ymin =  1e30f, zmin =  1e30f;
-    float xmax = -1e30f, ymax = -1e30f, zmax = -1e30f;
-
-    size_t gi = 0;
-    for (size_t i = 0; i < tiles.size(); i++) {
-        for (size_t j = 0; j < tiles[i].size(); j++) {
-            size_t tile_idx = (ny > 0) ? (i * ny + j) % num_tiles : 0;
-            P3f tc = palette[tile_idx];
-
-            for (size_t k = 0; k < tiles[i][j].size(); k++) {
-                const auto& p = tiles[i][j][k];
-                pos[gi*3]   = p[0];
-                pos[gi*3+1] = p[1];
-                pos[gi*3+2] = p[2];
-                xmin = std::min(xmin, p[0]); xmax = std::max(xmax, p[0]);
-                ymin = std::min(ymin, p[1]); ymax = std::max(ymax, p[1]);
-                zmin = std::min(zmin, p[2]); zmax = std::max(zmax, p[2]);
-
-                col_tile[gi*3]   = tc[0];
-                col_tile[gi*3+1] = tc[1];
-                col_tile[gi*3+2] = tc[2];
-
-                P3f sfc = {0.4f, 0.4f, 0.4f};
-                if (has_sf && i < sf.size() && j < sf[i].size() && k < sf[i][j].size()) {
-                    const auto& sp = sf[i][j][k];
-                    if (sp[0] >= 0 && sp[0] <= 1 &&
-                        sp[1] >= 0 && sp[1] <= 1 &&
-                        sp[2] >= 0 && sp[2] <= 1)
-                        sfc = sp;
-                }
-                col_sf[gi*3]   = sfc[0];
-                col_sf[gi*3+1] = sfc[1];
-                col_sf[gi*3+2] = sfc[2];
-
-                gi++;
-            }
-        }
-    }
-
-    // Normalize positions to [-1, 1]
-    float cx = (xmin + xmax) * 0.5f, cy = (ymin + ymax) * 0.5f, cz = (zmin + zmax) * 0.5f;
-    float scale = std::max({xmax - xmin, ymax - ymin, zmax - zmin, 1e-6f});
-    for (size_t i = 0; i < total; i++) {
-        pos[i*3]   = (pos[i*3]   - cx) / scale * 2.0f;
-        pos[i*3+1] = (pos[i*3+1] - cy) / scale * 2.0f;
-        pos[i*3+2] = (pos[i*3+2] - cz) / scale * 2.0f;
-    }
-
-    // Encode as base64 Float32Arrays
-    std::string b64_pos  = b64_encode(pos.data(),      pos.size()      * sizeof(float));
-    std::string b64_tile = b64_encode(col_tile.data(), col_tile.size() * sizeof(float));
-    std::string b64_sf   = b64_encode(col_sf.data(),   col_sf.size()   * sizeof(float));
-
-    std::ostringstream o;
-
-    o << R"HTML(<!DOCTYPE html>
+  o << R"HTML(<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
@@ -184,26 +221,53 @@ canvas{display:block;width:100vw;height:100vh}
   <button id="btn-color" onclick="toggleColor()">Toggle Colors</button>
 )HTML";
 
-    o << "  <div class=\"chip\"><b>" << total << "</b> points &nbsp;·&nbsp; <b>"
-      << num_tiles << "</b> tiles (" << nx << "&times;" << ny << ")</div>\n";
-    o << "  <div id=\"mode-label\" class=\"chip\">Mode: <b>"
-      << (has_sf ? "Shape Factors" : "Tiles") << "</b></div>\n";
+  o << "  <div class=\"chip\"><b>" << total << "</b> points &nbsp;·&nbsp; <b>"
+    << num_tiles << "</b> tiles (" << nx << "&times;" << ny << ")</div>\n";
+  o << "  <div id=\"mode-label\" class=\"chip\">Mode: <b>"
+    << (has_sf ? "Shape Factors" : "Tiles") << "</b></div>\n";
 
-    o << R"HTML(</div>
+  o << R"HTML(</div>
 <div id="hint">Drag: rotate &nbsp;|&nbsp; Right-drag / two-finger: pan &nbsp;|&nbsp; Scroll / pinch: zoom</div>
 <script>
 )HTML";
 
-    o << "const N=" << total << ",HAS_SF=" << (has_sf ? "true" : "false") << ";\n";
-    o << "function b64f(s){"
-         "const b=atob(s),u=new Uint8Array(b.length);"
-         "for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);"
-         "return new Float32Array(u.buffer);}\n";
-    o << "const POS=b64f('"      << b64_pos  << "');\n";
-    o << "const COL_TILE=b64f('" << b64_tile << "');\n";
-    o << "const COL_SF=b64f('"   << b64_sf   << "');\n";
+  o << "const N=" << total << ",HAS_SF=" << (has_sf ? "true" : "false")
+    << ";\n";
 
-    o << R"JS(
+  o << "const POS_B64='";
+  b64_encode_stream(o, tiles.pos.data(), tiles.pos.size() * sizeof(float));
+  o << "';\n";
+  {
+    std::vector<float> tmp;
+    tmp.swap(tiles.pos);
+  }
+
+  o << "const COL_TILE_B64='";
+  b64_encode_stream(o, tiles.col_tile.data(),
+                    tiles.col_tile.size() * sizeof(float));
+  o << "';\n";
+  {
+    std::vector<float> tmp;
+    tmp.swap(tiles.col_tile);
+  }
+
+  o << "const COL_SF_B64='";
+  b64_encode_stream(o, tiles.col_sf.data(),
+                    tiles.col_sf.size() * sizeof(float));
+  o << "';\n";
+  {
+    std::vector<float> tmp;
+    tmp.swap(tiles.col_sf);
+  }
+
+  o << R"JS(
+function b64ToF32(s) {
+  const raw = atob(s);
+  const u8  = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) u8[i] = raw.charCodeAt(i);
+  return new Float32Array(u8.buffer); // zero-copy view
+}
+
 // ── WebGL setup ───────────────────────────────────────────────────────────────
 const canvas = document.getElementById('c');
 const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
@@ -249,19 +313,19 @@ const aPos = gl.getAttribLocation(prog, 'a_pos');
 const aCol = gl.getAttribLocation(prog, 'a_col');
 const uMvp = gl.getUniformLocation(prog, 'u_mvp');
 
-function makeVbo(data) {
-  const b = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, b);
+function makeVbo(b64) {
+  const data = b64ToF32(b64);
+  const buf  = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
-  return b;
+  return buf; // JS Float32Array goes out of scope → GC can collect
 }
 
-const bufPos  = makeVbo(POS);
-const bufTile = makeVbo(COL_TILE);
-const bufSf   = makeVbo(COL_SF);
+const bufPos  = makeVbo(POS_B64);
+const bufTile = makeVbo(COL_TILE_B64);
+const bufSf   = makeVbo(COL_SF_B64);
 
 // ── Color mode ────────────────────────────────────────────────────────────────
-// 0 = shape factors (if available), 1 = tile colors
 let colorMode = HAS_SF ? 0 : 1;
 
 function toggleColor() {
@@ -397,48 +461,49 @@ window.addEventListener('resize', render);
 render();
 )JS";
 
-    o << "</script>\n</body>\n</html>";
-    return o.str();
+  o << "</script>\n</body>\n</html>";
+  return o.str();
 }
-
-// ── Emscripten exports ────────────────────────────────────────────────────────
 
 extern "C" {
 
-// Reads tiles_path (required) and sf_path (optional, pass "" to skip) from the
-// Emscripten virtual FS and returns a malloc'd self-contained HTML string.
-// Caller must free with free_result().
 EMSCRIPTEN_KEEPALIVE
-char* visualize(const char* tiles_path, const char* sf_path) {
-    try {
-        auto tiles = read_grid(tiles_path ? tiles_path : "");
-        std::vector<std::vector<std::vector<P3f>>> sf;
-        if (sf_path && sf_path[0] != '\0')
-            sf = read_grid(sf_path);
+char *visualize(const char *tiles_path, const char *sf_path) {
+  try {
+    FlatGrid tiles, sf_grid;
 
-        std::string html = generate_html(tiles, sf);
-        char* r = static_cast<char*>(std::malloc(html.size() + 1));
-        if (!r) throw std::bad_alloc();
-        std::memcpy(r, html.c_str(), html.size() + 1);
-        return r;
-    } catch (const std::exception& ex) {
-        std::string msg = "<html><body style='background:#0d1117;color:#ff7b72;padding:2em;font-family:sans-serif'>Error: ";
-        msg += ex.what();
-        msg += "</body></html>";
-        char* r = static_cast<char*>(std::malloc(msg.size() + 1));
-        if (r) std::memcpy(r, msg.c_str(), msg.size() + 1);
-        return r;
-    } catch (...) {
-        const char* msg = "<html><body style='background:#0d1117;color:#ff7b72;padding:2em'>Unknown error</body></html>";
-        char* r = static_cast<char*>(std::malloc(std::strlen(msg) + 1));
-        if (r) std::strcpy(r, msg);
-        return r;
-    }
+    read_grid_flat(tiles_path ? tiles_path : "", tiles, false);
+
+    if (sf_path && sf_path[0] != '\0')
+      read_grid_flat(sf_path, sf_grid, true);
+
+    std::string html = generate_html(tiles, sf_grid);
+    char *r = static_cast<char *>(std::malloc(html.size() + 1));
+    if (!r)
+      throw std::bad_alloc();
+    std::memcpy(r, html.c_str(), html.size() + 1);
+    return r;
+  } catch (const std::exception &ex) {
+    std::string msg = "<html><body "
+                      "style='background:#0d1117;color:#ff7b72;padding:2em;"
+                      "font-family:sans-serif'>Error: ";
+    msg += ex.what();
+    msg += "</body></html>";
+    char *r = static_cast<char *>(std::malloc(msg.size() + 1));
+    if (r)
+      std::memcpy(r, msg.c_str(), msg.size() + 1);
+    return r;
+  } catch (...) {
+    const char *msg = "<html><body "
+                      "style='background:#0d1117;color:#ff7b72;padding:2em'>"
+                      "Unknown error</body></html>";
+    char *r = static_cast<char *>(std::malloc(std::strlen(msg) + 1));
+    if (r)
+      std::strcpy(r, msg);
+    return r;
+  }
 }
 
 EMSCRIPTEN_KEEPALIVE
-void free_result(char* ptr) {
-    std::free(ptr);
+void free_result(char *ptr) { std::free(ptr); }
 }
-
-} // extern "C"

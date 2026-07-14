@@ -5,8 +5,8 @@ target_compile_options(gridvis PRIVATE -std=c++17)
 target_link_options(gridvis PRIVATE
     -sWASM=1
     -sALLOW_MEMORY_GROWTH=1
-    -sINITIAL_MEMORY=67108864      # 64 MB
-    -sMAXIMUM_MEMORY=1073741824    # 1 GB
+    -sINITIAL_MEMORY=134217728     # 128 MB
+    -sMAXIMUM_MEMORY=2147483648    # 2 GB (absolute ceiling; ALLOW_MEMORY_GROWTH handles growth)
     -sEXPORTED_RUNTIME_METHODS=FS,UTF8ToString,ccall
     -sEXPORTED_FUNCTIONS=_visualize,_free_result
     -sNO_EXIT_RUNTIME=1
