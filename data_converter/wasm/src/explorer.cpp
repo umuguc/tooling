@@ -8,6 +8,7 @@
 #include <fstream>
 #include <functional>
 #include <iomanip>
+#include <new>
 #include <queue>
 #include <sstream>
 #include <string>
@@ -367,7 +368,11 @@ static void nodeToJson(const Node &n, std::ostringstream &o) {
 }
 
 // BFS so each object is visited via its shortest path first.
-static void buildTree(hid_t file, Node &root) {
+// includeMeta controls whether readDatasetInfo() (attribute + value-preview
+// reads) runs for every dataset — expensive, and only actually used by
+// explore()'s interactive HTML. get_file_tree() (the sidebar) only needs
+// name/path/type/children, so it passes false to skip that I/O entirely.
+static void buildTree(hid_t file, Node &root, bool includeMeta) {
   std::unordered_set<std::string> visited;
 
   {
@@ -411,7 +416,7 @@ static void buildTree(hid_t file, Node &root) {
       child.name    = name;
       child.path    = joinPath(cur->path, name);
       child.isGroup = (type == H5G_GROUP);
-      if (type == H5G_DATASET)
+      if (type == H5G_DATASET && includeMeta)
         child.meta = readDatasetInfo(file, child.path);
       cur->children.push_back(std::move(child));
     }
@@ -427,6 +432,10 @@ static void buildTree(hid_t file, Node &root) {
 
 static std::string g_hdf5_path;
 static hid_t       g_hdf5_file = -1; // kept open so downloads work after VFS unlink
+
+// Set by the convert_*/build_* functions right before they return -1, so JS
+// can call get_last_error() to find out *why* instead of getting a bare -1.
+static std::string g_last_error;
 
 extern "C" {
 
@@ -654,13 +663,11 @@ function dlCSV(path){
   const name=path.split('/').filter(Boolean).pop()||'data';
   const btn=event&&event.currentTarget;
   if(btn){btn.textContent='Extracting...';btn.disabled=true;}
-  setTimeout(function(){
-    const M=window.parent._explorerModule||window._explorerModule;
-    const ptr=M.ccall('get_dataset_csv','number',['string'],[path]);
+  // The WASM module runs in a Worker (see explorer-worker.js), so the parent
+  // page bridges this call across postMessage instead of touching Module directly.
+  window.parent.__requestCsv(path).then(function(csv){
     if(btn){btn.textContent='&#11123; Download CSV';btn.disabled=false;}
-    if(!ptr)return;
-    const csv=M.UTF8ToString(ptr);
-    M._free_result(ptr);
+    if(!csv)return;
     const blob=new Blob([csv],{type:'text/csv'});
     const a=document.createElement('a');
     a.href=URL.createObjectURL(blob);
@@ -669,7 +676,10 @@ function dlCSV(path){
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(a.href);
-  },10);
+  }).catch(function(err){
+    if(btn){btn.textContent='&#11123; Download CSV';btn.disabled=false;}
+    alert('Failed to extract CSV: ' + (err && err.message ? err.message : err));
+  });
 }
 function e(s){
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -860,24 +870,63 @@ static std::vector<double> readScalar1D(hid_t file_id, const std::string& full_p
 struct GridIndex { int x, y; };
 
 template<typename T>
-static void append(std::vector<uint8_t>& buf, const T& v) {
+static void appendRaw(std::vector<uint8_t>& buf, const T& v) {
   const auto* p = reinterpret_cast<const uint8_t*>(&v);
   buf.insert(buf.end(), p, p + sizeof(T));
+}
+
+// Hands a tile's serialised bytes straight to the worker's postMessage queue
+// as a small transferable chunk — no MEMFS file involved. Writing the whole
+// conversion output to a MEMFS file (even via a streaming ofstream) still
+// forces MEMFS to grow one contiguous backing buffer for the *entire* file
+// as it's written, which is its own out-of-memory ceiling completely
+// separate from the WASM heap. Emitting each tile directly avoids ever
+// materialising the full output anywhere as a single buffer.
+EM_JS(void, js_emit_chunk, (int req_id, const uint8_t* data, int len), {
+  var chunk = new Uint8Array(len);
+  chunk.set(HEAPU8.subarray(data, data + len));
+  postMessage({ id: req_id, chunk: chunk }, [chunk.buffer]);
+});
+
+// Emits an arbitrarily large byte range in bounded pieces. js_emit_chunk's
+// len is a 32-bit int, and a single dataset can exceed INT32_MAX bytes (the
+// 100M-point cap alone is already ~2.4GB) — chunking here keeps every
+// individual emission safely sized regardless of how big the source is.
+static void emitBytesChunked(int req_id, const uint8_t* data, size_t total_len) {
+  const size_t CHUNK = 64u * 1024u * 1024u; // 64MB
+  size_t off = 0;
+  while (off < total_len) {
+    size_t len = std::min(CHUNK, total_len - off);
+    js_emit_chunk(req_id, data + off, (int)len);
+    off += len;
+  }
 }
 
 // Serialises one tile into the binary_io grid-file format (binary_io.hpp):
 //   GridIndex{int x, int y}  →  sizeof(GridIndex) = 8 bytes
 //   int size                 →  4 bytes
 //   size × (double,double,double)  →  size × sizeof(double)*3 bytes
-static void writeTile(std::vector<uint8_t>& buf, int ti, int tj,
-                       const std::vector<XYZ>& pts) {
+//
+// Emits straight to the worker instead of appending to an in-memory buffer
+// or a MEMFS file — peak memory during a conversion is then bounded by the
+// single largest selected dataset, not by the sum of every dataset in the
+// grid (nor by the total output size), which is what let a big group's
+// conversion blow first the WASM heap, then MEMFS's own buffer.
+// Returns uint64_t, not size_t — size_t is only 32 bits on wasm32, and a
+// caller summing this across many tiles needs to hold totals past 4GB.
+static uint64_t emitTile(int req_id, int ti, int tj, const std::vector<XYZ>& pts) {
+  std::vector<uint8_t> buf;
+  buf.reserve(sizeof(GridIndex) + sizeof(int) + pts.size() * sizeof(XYZ));
   GridIndex gi{ti, tj};
-  append(buf, gi);
+  appendRaw(buf, gi);
   int n = (int)pts.size();
-  append(buf, n);
-  for (auto& p : pts) {
-    append(buf, p.x); append(buf, p.y); append(buf, p.z);
+  appendRaw(buf, n);
+  if (n > 0) {
+    const auto* p = reinterpret_cast<const uint8_t*>(pts.data());
+    buf.insert(buf.end(), p, p + pts.size() * sizeof(XYZ));
   }
+  emitBytesChunked(req_id, buf.data(), buf.size());
+  return buf.size();
 }
 
 static char* makeJsonResult(const std::string& json) {
@@ -906,7 +955,7 @@ char *explore(const char *h5path) {
     root.name    = "/";
     root.path    = "/";
     root.isGroup = true;
-    buildTree(file.getId(), root);
+    buildTree(file.getId(), root, /*includeMeta=*/true);
 
     std::string html = generateHTML(root);
     char *result = static_cast<char *>(std::malloc(html.size() + 1));
@@ -934,6 +983,16 @@ char *explore(const char *h5path) {
 EMSCRIPTEN_KEEPALIVE
 void free_result(char *ptr) {
   std::free(ptr);
+}
+
+// Returns a malloc'd string describing why the most recent convert_*/
+// convert_bins_to_hdf5 call returned -1. Empty string if the last call
+// didn't fail. Caller must free with free_result().
+EMSCRIPTEN_KEEPALIVE
+char *get_last_error() {
+  char *r = static_cast<char *>(std::malloc(g_last_error.size() + 1));
+  if (r) std::memcpy(r, g_last_error.c_str(), g_last_error.size() + 1);
+  return r;
 }
 
 // Returns a malloc'd JSON array of HDF5 group paths whose leaf name equals group_name.
@@ -968,40 +1027,100 @@ char* get_datasets(const char* h5path, const char* group_path) {
   }
 }
 
-// Converts selected datasets to binary_io grid format and writes to out_vfs_path in the
-// Emscripten virtual FS. Returns the number of bytes written, or -1 on error.
+// Converts selected datasets to binary_io grid format, emitting each tile
+// directly to the worker (see js_emit_chunk) as it's read — no MEMFS file
+// involved. Returns the number of bytes emitted, or -1 on error.
 // datasets_json : JSON array of dataset names in row-major order (rows * cols entries).
+// Returns double, not int — totals can exceed 2^31 bytes for large
+// conversions, which would silently wrap negative in a 32-bit int.
 EMSCRIPTEN_KEEPALIVE
-int convert_to_binary_file(const char* h5path, const char* group_path,
-                            const char* datasets_json, int rows, int cols,
-                            const char* out_vfs_path) {
+double convert_to_binary_file(const char* h5path, const char* group_path,
+                               const char* datasets_json, int rows, int cols,
+                               int req_id) {
+  g_last_error.clear();
   try {
     hid_t file = H5Fopen(h5path, H5F_ACC_RDONLY, H5P_DEFAULT);
-    if (file < 0) return -1;
+    if (file < 0) { g_last_error = "H5Fopen failed on the mounted file"; return -1; }
 
     auto        names = parseJsonStringArray(datasets_json);
     std::string gpath = group_path ? group_path : "/";
-    std::vector<uint8_t> buf;
 
+    if (names.empty()) { H5Fclose(file); return 0; }
+
+    uint64_t total_bytes = 0;  // not size_t — that's 32 bits on wasm32
     for (int i = 0; i < rows; i++) {
       for (int j = 0; j < cols; j++) {
         int idx = i * cols + j;
         if (idx >= (int)names.size()) break;
         if (names[idx].empty())
-          writeTile(buf, i, j, {});          // null/empty slot — write 0-point tile
+          total_bytes += emitTile(req_id, i, j, {});   // null/empty slot — write 0-point tile
         else
-          writeTile(buf, i, j, readPoints(file, gpath, names[idx]));
+          total_bytes += emitTile(req_id, i, j, readPoints(file, gpath, names[idx]));
       }
     }
     H5Fclose(file);
 
-    if (buf.empty()) return 0;
-
-    std::ofstream out(out_vfs_path ? out_vfs_path : "/out.bin", std::ios::binary);
-    if (!out) return -1;
-    out.write(reinterpret_cast<const char*>(buf.data()), (std::streamsize)buf.size());
-    return (int)buf.size();
+    return (double)total_bytes;
+  } catch (const std::bad_alloc&) {
+    g_last_error = "out of memory — the selected datasets are too large to hold in the "
+                   "WASM heap all at once; try converting fewer datasets per run";
+    return -1;
+  } catch (const H5::Exception& ex) {
+    g_last_error = std::string("HDF5 error: ") + ex.getCDetailMsg();
+    return -1;
+  } catch (const std::exception& ex) {
+    g_last_error = std::string("error: ") + ex.what();
+    return -1;
   } catch (...) {
+    g_last_error = "unknown error";
+    return -1;
+  }
+}
+
+// Converts every selected dataset to a single flat point-cloud binary file:
+// just (x,y,z) doubles back to back for every point in every selected
+// dataset, in selection order — no tile framing, no headers. Matches
+// binary_io::write_point_file's format (see binary_io.hpp / converter.cpp),
+// i.e. what the native CLI converter's -group mode produces.
+// datasets_json : JSON array of dataset (field) names to include, in order.
+// Returns the number of bytes emitted, or -1 on error.
+EMSCRIPTEN_KEEPALIVE
+double convert_to_points_binary(const char* h5path, const char* group_path,
+                                 const char* datasets_json, int req_id) {
+  g_last_error.clear();
+  try {
+    hid_t file = H5Fopen(h5path, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) { g_last_error = "H5Fopen failed on the mounted file"; return -1; }
+
+    auto        names = parseJsonStringArray(datasets_json);
+    std::string gpath = group_path ? group_path : "/";
+
+    if (names.empty()) { H5Fclose(file); return 0; }
+
+    uint64_t total_bytes = 0;  // not size_t — that's 32 bits on wasm32
+    for (const auto& name : names) {
+      if (name.empty()) continue;
+      auto pts = readPoints(file, gpath, name);
+      if (pts.empty()) continue;
+      size_t nbytes = pts.size() * sizeof(XYZ);
+      emitBytesChunked(req_id, reinterpret_cast<const uint8_t*>(pts.data()), nbytes);
+      total_bytes += nbytes;
+    }
+    H5Fclose(file);
+
+    return (double)total_bytes;
+  } catch (const std::bad_alloc&) {
+    g_last_error = "out of memory — the selected fields are too large to hold in the "
+                   "WASM heap all at once; try converting fewer fields per run";
+    return -1;
+  } catch (const H5::Exception& ex) {
+    g_last_error = std::string("HDF5 error: ") + ex.getCDetailMsg();
+    return -1;
+  } catch (const std::exception& ex) {
+    g_last_error = std::string("error: ") + ex.what();
+    return -1;
+  } catch (...) {
+    g_last_error = "unknown error";
     return -1;
   }
 }
@@ -1017,16 +1136,18 @@ int convert_to_binary_file(const char* h5path, const char* group_path,
 //   sf_parent_path/grp_s/fiber_name  →  N doubles (sphericity per point)
 //
 // These are interleaved as (L, P, S) triplets and written in binary_io format.
+// Returns double, not int — see convert_to_binary_file for why.
 EMSCRIPTEN_KEEPALIVE
-int convert_sf_to_binary_file(const char* h5path,
-                               const char* datasets_json,
-                               int rows, int cols,
-                               const char* sf_parent_path,
-                               const char* grp_l, const char* grp_p, const char* grp_s,
-                               const char* out_vfs_path) {
+double convert_sf_to_binary_file(const char* h5path,
+                                  const char* datasets_json,
+                                  int rows, int cols,
+                                  const char* sf_parent_path,
+                                  const char* grp_l, const char* grp_p, const char* grp_s,
+                                  int req_id) {
+  g_last_error.clear();
   try {
     hid_t file = H5Fopen(h5path, H5F_ACC_RDONLY, H5P_DEFAULT);
-    if (file < 0) return -1;
+    if (file < 0) { g_last_error = "H5Fopen failed on the mounted file"; return -1; }
 
     auto        names = parseJsonStringArray(datasets_json);
     std::string sfp   = sf_parent_path ? sf_parent_path : "/";
@@ -1035,15 +1156,16 @@ int convert_sf_to_binary_file(const char* h5path,
     std::string gp = grp_p ? grp_p : "Planarity";
     std::string gs = grp_s ? grp_s : "Spherical";
 
-    std::vector<uint8_t> buf;
+    if (names.empty()) { H5Fclose(file); return 0; }
 
+    uint64_t total_bytes = 0;  // not size_t — that's 32 bits on wasm32
     for (int i = 0; i < rows; i++) {
       for (int j = 0; j < cols; j++) {
         int idx = i * cols + j;
         if (idx >= (int)names.size()) break;
         const std::string& ds = names[idx];
         if (ds.empty()) {
-          writeTile(buf, i, j, {});          // null/empty slot — write 0-point tile
+          total_bytes += emitTile(req_id, i, j, {});   // null/empty slot — write 0-point tile
         } else {
           auto L = readScalar1D(file, sfp + "/" + gl + "/" + ds);
           auto P = readScalar1D(file, sfp + "/" + gp + "/" + ds);
@@ -1052,19 +1174,25 @@ int convert_sf_to_binary_file(const char* h5path,
           std::vector<XYZ> pts(n);
           for (size_t k = 0; k < n; k++)
             pts[k] = { L[k], k < P.size() ? P[k] : 0.0, k < S.size() ? S[k] : 0.0 };
-          writeTile(buf, i, j, pts);
+          total_bytes += emitTile(req_id, i, j, pts);
         }
       }
     }
     H5Fclose(file);
 
-    if (buf.empty()) return 0;
-
-    std::ofstream out(out_vfs_path ? out_vfs_path : "/sf_out.bin", std::ios::binary);
-    if (!out) return -1;
-    out.write(reinterpret_cast<const char*>(buf.data()), (std::streamsize)buf.size());
-    return (int)buf.size();
+    return (double)total_bytes;
+  } catch (const std::bad_alloc&) {
+    g_last_error = "out of memory — the selected datasets are too large to hold in the "
+                   "WASM heap all at once; try converting fewer datasets per run";
+    return -1;
+  } catch (const H5::Exception& ex) {
+    g_last_error = std::string("HDF5 error: ") + ex.getCDetailMsg();
+    return -1;
+  } catch (const std::exception& ex) {
+    g_last_error = std::string("error: ") + ex.what();
+    return -1;
   } catch (...) {
+    g_last_error = "unknown error";
     return -1;
   }
 }
@@ -1242,13 +1370,14 @@ int convert_bins_to_hdf5(
     const char* sf_parent_path,
     const char* grp_l, const char* grp_p, const char* grp_s,
     const char* out_h5_path) {
+  g_last_error.clear();
   try {
     auto names = parseJsonStringArray(datasets_json);
-    if (names.empty()) return -1;
+    if (names.empty()) { g_last_error = "no dataset names provided"; return -1; }
 
     hid_t out_file = H5Fcreate(out_h5_path ? out_h5_path : "/combined_out.h5",
                                 H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
-    if (out_file < 0) return -1;
+    if (out_file < 0) { g_last_error = "H5Fcreate failed for the output file"; return -1; }
 
     int sources = 0;
 
@@ -1331,7 +1460,18 @@ int convert_bins_to_hdf5(
 
     H5Fclose(out_file);
     return sources;
+  } catch (const std::bad_alloc&) {
+    g_last_error = "out of memory — the binary files are too large to hold in the "
+                   "WASM heap all at once; try building fewer tiles per run";
+    return -1;
+  } catch (const H5::Exception& ex) {
+    g_last_error = std::string("HDF5 error: ") + ex.getCDetailMsg();
+    return -1;
+  } catch (const std::exception& ex) {
+    g_last_error = std::string("error: ") + ex.what();
+    return -1;
   } catch (...) {
+    g_last_error = "unknown error";
     return -1;
   }
 }
@@ -1347,7 +1487,7 @@ char* get_file_tree(const char* h5path) {
   root.name    = "/";
   root.path    = "/";
   root.isGroup = true;
-  buildTree(file, root);
+  buildTree(file, root, /*includeMeta=*/false);
   H5Fclose(file);
   std::ostringstream o;
   nodeToJson(root, o);

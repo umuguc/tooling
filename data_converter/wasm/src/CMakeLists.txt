@@ -24,11 +24,20 @@ target_link_options(explorer PRIVATE
     -fexceptions
     -sWASM=1
     -sALLOW_MEMORY_GROWTH=1
-    -sINITIAL_MEMORY=67108864      # 64 MB
-    -sMAXIMUM_MEMORY=1073741824    # 1 GB
+    -sINITIAL_MEMORY=268435456     # 256 MB (higher start = fewer grow-and-copy pauses)
+    -sMAXIMUM_MEMORY=3758096384    # 3.5 GB — WORKERFS means the source file no longer
+                                    # needs to be memory-resident, so nearly the whole
+                                    # heap is available for conversion output. Left some
+                                    # headroom below wasm32's hard 4GB address-space cap.
     -sDISABLE_EXCEPTION_CATCHING=0
+    -lworkerfs.js                  # mounts the user's File in a Worker for on-demand
+                                    # HDF5 reads, so opening a file doesn't require
+                                    # loading it fully into the WASM heap first
+    -sFORCE_FILESYSTEM=1           # keep WORKERFS in the build — nothing in the
+                                    # compiled C++ calls it, only explorer-worker.js,
+                                    # so JS-side DCE would otherwise strip it
     -sEXPORTED_RUNTIME_METHODS=FS,UTF8ToString,ccall
-    -sEXPORTED_FUNCTIONS=_explore,_free_result,_find_groups,_get_datasets,_convert_to_binary_file,_convert_sf_to_binary_file,_get_dataset_csv,_binary_to_hdf5,_binary_sf_to_hdf5,_convert_bins_to_hdf5,_scan_bin_tiles,_get_file_tree
+    -sEXPORTED_FUNCTIONS=_explore,_free_result,_find_groups,_get_datasets,_convert_to_binary_file,_convert_sf_to_binary_file,_convert_to_points_binary,_get_dataset_csv,_binary_to_hdf5,_binary_sf_to_hdf5,_convert_bins_to_hdf5,_scan_bin_tiles,_get_file_tree,_get_last_error
     -sNO_EXIT_RUNTIME=1
     -sMODULARIZE=1
     -sEXPORT_NAME=createExplorer

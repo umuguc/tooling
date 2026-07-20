@@ -34,15 +34,17 @@ h1 span{color:#3fb950}
 .drop-hint{font-size:12px;color:#7d8590}
 #drop-filename{font-size:12px;color:#3fb950;margin-top:8px;word-break:break-all}
 
-#action-buttons{display:none;width:100%;gap:12px;flex-direction:row}
+#action-buttons{display:none;width:100%;gap:12px;flex-direction:row;flex-wrap:wrap}
 .action-btn{
-  flex:1;padding:12px;border-radius:8px;border:none;
+  flex:1 1 calc(50% - 6px);padding:12px;border-radius:8px;border:none;
   font-size:14px;font-weight:600;cursor:pointer;transition:background .2s,opacity .2s;
 }
 #btn-explore {background:#1f6feb;color:#e6edf3}
 #btn-explore:hover{background:#388bfd}
-#btn-convert {background:#238636;color:#e6edf3}
-#btn-convert:hover{background:#2ea043}
+#btn-convert-points {background:#238636;color:#e6edf3}
+#btn-convert-points:hover{background:#2ea043}
+#btn-convert {background:#0e7490;color:#e6edf3}
+#btn-convert:hover{background:#0891b2}
 
 /* ── Status ── */
 #status{
@@ -119,16 +121,27 @@ h1 span{color:#3fb950}
 .sb-use-btn.sf:hover{background:#12261e;border-color:#238636;color:#3fb950}
 #cp-body{flex:1;overflow-y:auto;padding:28px 32px;display:flex;flex-direction:column;gap:32px;max-width:800px}
 
+/* ── Points panel (simple flat x,y,z export) — mirrors #convert-panel ── */
+#points-panel{display:none;flex-direction:column;position:fixed;inset:0;background:#0d1117;overflow:hidden}
+#pp-header{
+  flex-shrink:0;z-index:10;
+  background:#161b22;border-bottom:1px solid #30363d;
+  padding:12px 20px;display:flex;align-items:center;gap:16px;
+}
+#pp-title{font-size:15px;font-weight:600}
+#pp-file{font-size:12px;color:#7d8590;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#pp-body{flex:1;overflow-y:auto;padding:28px 32px;display:flex;flex-direction:column;gap:32px;max-width:800px}
+
 .section-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:#7d8590;margin-bottom:12px}
 
 /* Search row */
 #search-row{display:flex;gap:10px;align-items:center}
-#group-name-input{
+#group-name-input,#pp-group-name-input{
   flex:1;background:#161b22;border:1px solid #30363d;border-radius:8px;
   color:#e6edf3;padding:9px 14px;font-size:14px;outline:none;
   transition:border-color .2s;
 }
-#group-name-input:focus{border-color:#1f6feb}
+#group-name-input:focus,#pp-group-name-input:focus{border-color:#1f6feb}
 .pill-btn{
   background:#1f6feb;color:#e6edf3;border:none;border-radius:8px;
   padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;
@@ -168,7 +181,7 @@ h1 span{color:#3fb950}
 #ds-controls{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
 .link-btn{background:none;border:none;color:#1f6feb;font-size:12px;cursor:pointer;padding:0;text-decoration:underline}
 .link-btn:hover{color:#388bfd}
-#sel-count{font-size:12px;color:#7d8590;margin-left:auto}
+#sel-count,#pp-sel-count{font-size:12px;color:#7d8590;margin-left:auto}
 
 /* Shape factors section */
 #sf-section{display:none}
@@ -256,7 +269,8 @@ h1 span{color:#3fb950}
 
   <div id="action-buttons">
     <button id="btn-explore" class="action-btn" onclick="doExplore()">Explore Structure</button>
-    <button id="btn-convert" class="action-btn" onclick="doConvert()">Convert to Binary</button>
+    <button id="btn-convert-points" class="action-btn" onclick="doConvertPoints()">Convert to Binary</button>
+    <button id="btn-convert" class="action-btn" onclick="doConvert()">Convert Tiles</button>
     <button id="btn-build" class="action-btn" onclick="doBuild()" style="display:none">Build HDF5</button>
   </div>
 
@@ -277,7 +291,7 @@ h1 span{color:#3fb950}
 <div id="convert-panel">
   <div id="cp-header">
     <button id="btn-back" onclick="goBack()">← Back</button>
-    <span id="cp-title">Convert to Binary</span>
+    <span id="cp-title">Convert Tiles &amp; Shape Factors</span>
     <span id="cp-file"></span>
   </div>
 
@@ -382,6 +396,71 @@ h1 span{color:#3fb950}
   </div><!-- cp-body -->
   </div><!-- panel-layout -->
 </div><!-- convert-panel -->
+
+<!-- ── Points panel (simple flat x,y,z export, no tiling) ────────────────── -->
+<div id="points-panel">
+  <div id="pp-header">
+    <button onclick="goBack()" style="background:none;border:1px solid #30363d;color:#7d8590;border-radius:6px;padding:5px 12px;font-size:13px;cursor:pointer;flex-shrink:0;transition:border-color .2s,color .2s">← Back</button>
+    <span id="pp-title">Convert to Binary</span>
+    <span id="pp-file"></span>
+  </div>
+
+  <div class="panel-layout">
+  <div class="hdf5-sidebar" id="pp-sidebar">
+    <div class="sb-title">File structure</div>
+    <div class="sb-tree" id="pp-tree"><div class="sb-empty">Load an HDF5 file to see its structure here.</div></div>
+    <div class="sb-actions" id="pp-actions" style="display:none">
+      <div class="sb-sel-path" id="pp-sel-path"></div>
+      <button class="sb-use-btn" onclick="useSbPath('pp','pos')">→ Use as group</button>
+    </div>
+  </div>
+
+  <div id="pp-body">
+
+    <!-- Step 1: Search for groups -->
+    <div>
+      <div class="section-title">1 · Find group by name</div>
+      <div id="pp-search-row" style="display:flex;gap:10px;align-items:center">
+        <input id="pp-group-name-input" type="text" value="Positions" placeholder="Group name…"
+               onkeydown="if(event.key==='Enter')ppSearchGroups()"/>
+        <button class="pill-btn" onclick="ppSearchGroups()">Search</button>
+      </div>
+    </div>
+
+    <!-- Step 2: Groups list -->
+    <div id="pp-groups-section" style="display:none">
+      <div class="section-title">2 · Select a group</div>
+      <div id="pp-groups-list"></div>
+    </div>
+
+    <!-- Step 3: Field selection -->
+    <div id="pp-datasets-section" style="display:none">
+      <div class="section-title">3 · Select fields</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <button class="link-btn" onclick="ppSelAll(true)">Select all</button>
+        <button class="link-btn" onclick="ppSelAll(false)">Deselect all</button>
+        <span id="pp-sel-count">0 selected</span>
+      </div>
+      <div id="pp-datasets-grid" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+    </div>
+
+    <!-- Step 4: Download -->
+    <div id="pp-download-section" style="display:none">
+      <div class="section-title">4 · Download</div>
+      <div style="font-size:11px;color:#7d8590;margin-bottom:12px">
+        Every point from every selected field, concatenated into one file — just (x, y, z) doubles
+        back to back, no headers or tiling.
+      </div>
+      <div id="pp-convert-status" style="display:none;align-items:center;gap:12px;font-size:13px;color:#7d8590;margin-bottom:12px">
+        <div class="spinner"></div>
+        <span id="pp-convert-status-text">Converting…</span>
+      </div>
+      <button id="btn-pp-download" class="pill-btn green" onclick="doPointsDownload()">↓ Download points.bin</button>
+    </div>
+
+  </div><!-- pp-body -->
+  </div><!-- panel-layout -->
+</div><!-- points-panel -->
 
 <!-- ── Build HDF5 panel ───────────────────────────────────────────────────── -->
 <div id="build-panel">
@@ -536,39 +615,113 @@ h1 span{color:#3fb950}
   </div><!-- panel-layout -->
 </div><!-- build-panel -->
 
-<script src="explorer.js"></script>
 <script>
-createExplorer().then(Module => {
-  window._explorerModule = Module; // expose for srcdoc iframe download calls
+// The WASM module runs in a Worker so uploaded files can be mounted via
+// WORKERFS (see explorer-worker.js) — reads happen lazily straight from the
+// File object instead of requiring the whole file to be copied into the
+// WASM heap first. That's what lets multi-GB files open at all.
+//
+// Browsers refuse to construct a Worker from a file:// page (origin "null"),
+// so this page must be served over HTTP — even just a local static server.
+if (location.protocol === 'file:') {
+  document.getElementById('wasm-loading').innerHTML =
+    '<div style="max-width:480px;text-align:center;color:#ff7b72;font-size:14px;line-height:1.6">' +
+    'This page can\'t run when opened directly as a file — browsers block Web Workers on file:// URLs.<br><br>' +
+    'Serve this folder over HTTP instead, e.g. from a terminal in <code>wasm/web/</code>:<br>' +
+    '<code style="display:inline-block;margin-top:8px;padding:6px 10px;background:#161b22;border-radius:6px">python3 -m http.server 8000</code><br><br>' +
+    'then open <code>http://localhost:8000/</code>.' +
+    '</div>';
+  throw new Error('HDF5 Web Tools cannot run from a file:// URL — serve wasm/web/ over HTTP instead.');
+}
 
-  // ── WASM ready ───────────────────────────────────────────────────────────────
-  document.getElementById('wasm-loading').style.opacity = '0';
-  setTimeout(() => {
-    document.getElementById('wasm-loading').style.display = 'none';
-    document.getElementById('upload-screen').style.display = 'flex';
-  }, 300);
+const worker = new Worker('explorer-worker.js');
+let nextReqId = 1;
+const pending = new Map();
 
+worker.onmessage = (ev) => {
+  const data = ev.data;
+  if (data.type === 'ready') {
+    document.getElementById('wasm-loading').style.opacity = '0';
+    setTimeout(() => {
+      document.getElementById('wasm-loading').style.display = 'none';
+      document.getElementById('upload-screen').style.display = 'flex';
+    }, 300);
+    return;
+  }
+  const p = pending.get(data.id);
+  if (!p) return;
+  // Large conversion results stream back as a series of small chunk messages
+  // (see explorer-worker.js) followed by one final summary message — a
+  // single multi-GB transfer can fail with "Array buffer allocation failed"
+  // even when the WASM heap itself is fine, so results are never sent as
+  // one giant buffer.
+  if (data.chunk !== undefined) {
+    if (p.onChunk) p.onChunk(data.chunk);
+    return;
+  }
+  pending.delete(data.id);
+  if (data.ok) p.resolve(data);
+  else p.reject(new Error(data.error || 'Worker error'));
+};
+
+worker.onerror = (ev) => {
+  document.getElementById('wasm-loading').innerHTML =
+    '<div style="color:#ff7b72;font-size:14px">Failed to load WASM module: ' + (ev.message || ev) + '</div>';
+};
+
+// onChunk, if given, is called with each Uint8Array chunk as it streams in
+// (used by the convert/build downloads to assemble a Blob without ever
+// holding the whole result as one contiguous buffer).
+function callWorker(type, data, onChunk) {
+  return new Promise((resolve, reject) => {
+    const id = nextReqId++;
+    pending.set(id, { resolve, reject, onChunk });
+    worker.postMessage(Object.assign({ id, type }, data || {}));
+  });
+}
+
+// Bridge for the srcdoc iframe generated by explore() — its dlCSV() calls
+// window.parent.__requestCsv(path) since it can't reach the worker directly.
+window.__requestCsv = function(path) {
+  return callWorker('getDatasetCsv', { path }).then(r => r.csv);
+};
+
+(function() {
   // ── State ────────────────────────────────────────────────────────────────────
-  let currentFile    = null;
-  let vfsPath        = null;   // non-null when file is loaded in virtual FS
+  let currentFile     = null;
+  let mainPath         = null;  // WORKERFS path once the 'main' slot is mounted
+  let mainMountedFor   = null;  // the File object mainPath was mounted for
   let selectedGroup   = null;
   let allDatasets     = [];
   let checkedDatasets = new Set();
   let emptyPositions  = new Set();  // Set of linear indices (i*cols+j) marked as empty
 
-  // ── VFS helpers ──────────────────────────────────────────────────────────────
-  async function ensureInVFS() {
-    if (vfsPath) return;
-    const bytes = new Uint8Array(await currentFile.arrayBuffer());
-    Module.FS.writeFile('/upload.h5', bytes);
-    vfsPath = '/upload.h5';
+  // ── Busy indicator ───────────────────────────────────────────────────────────
+  // The worker call this wraps is a single synchronous WASM call — there's no
+  // way to get real incremental progress out of it, so this shows elapsed time
+  // rather than a fake percentage bar. Returns a function to stop the ticker.
+  function withElapsed(render) {
+    const t0 = performance.now();
+    render(0);
+    const iv = setInterval(() => render((performance.now() - t0) / 1000), 400);
+    return () => clearInterval(iv);
   }
 
-  function removeFromVFS() {
-    if (vfsPath) {
-      try { Module.FS.unlink(vfsPath); } catch(_) {}
-      vfsPath = null;
-    }
+  // ── File-mount helpers ──────────────────────────────────────────────────────
+  // Mounts currentFile into the worker's WORKERFS under the 'main' slot,
+  // reusing the existing mount if it's already the right file.
+  async function ensureMainMounted() {
+    if (mainPath && mainMountedFor === currentFile) return mainPath;
+    const r = await callWorker('mount', { slot: 'main', file: currentFile });
+    mainPath = r.path;
+    mainMountedFor = currentFile;
+    return mainPath;
+  }
+
+  async function unmountMain() {
+    if (mainPath) { try { await callWorker('unmount', { slot: 'main' }); } catch(_) {} }
+    mainPath = null;
+    mainMountedFor = null;
   }
 
   // ── File input ───────────────────────────────────────────────────────────────
@@ -577,16 +730,17 @@ createExplorer().then(Module => {
 
   function setFile(file) {
     if (!file) return;
-    removeFromVFS();
+    unmountMain();
     currentFile = file;
     document.getElementById('drop-filename').textContent = file.name;
     dropZone.classList.add('has-file');
     document.getElementById('action-buttons').style.display = 'flex';
     document.getElementById('error-banner').style.display  = 'none';
     const isBin = file.name.toLowerCase().endsWith('.bin');
-    document.getElementById('btn-explore').style.display = isBin ? 'none' : '';
-    document.getElementById('btn-convert').style.display = isBin ? 'none' : '';
-    document.getElementById('btn-build').style.display   = '';
+    document.getElementById('btn-explore').style.display        = isBin ? 'none' : '';
+    document.getElementById('btn-convert-points').style.display = isBin ? 'none' : '';
+    document.getElementById('btn-convert').style.display        = isBin ? 'none' : '';
+    document.getElementById('btn-build').style.display          = '';
   }
 
   fileInput.addEventListener('change', e => setFile(e.target.files[0]));
@@ -618,15 +772,17 @@ createExplorer().then(Module => {
 
     try {
       statusText.textContent = `Reading ${currentFile.name}…`;
-      await ensureInVFS();
+      const path = await ensureMainMounted();
 
-      statusText.textContent = 'Building tree…';
-      await new Promise(r => setTimeout(r, 0));
-
-      const ptr  = Module.ccall('explore', 'number', ['string'], [vfsPath]);
-      const html = Module.UTF8ToString(ptr);
-      Module._free_result(ptr);
-      removeFromVFS();
+      const stopTimer = withElapsed(s => {
+        statusText.textContent = 'Building tree' + (s > 0.4 ? ' — ' + s.toFixed(1) + 's…' : '…');
+      });
+      let html;
+      try {
+        ({ html } = await callWorker('explore', { path }));
+      } finally {
+        stopTimer();
+      }
 
       if (!html.startsWith('<!DOCTYPE')) { showError(html.replace(/<[^>]*>/g, '').trim()); return; }
 
@@ -664,28 +820,207 @@ createExplorer().then(Module => {
 
     const panel = document.getElementById('convert-panel');
     panel.style.display = 'flex';
-    ensureInVFS().then(() => loadAndRenderSidebar(vfsPath, 'cp')).catch(() => {});
+    ensureMainMounted().then(path => loadAndRenderSidebar(path, 'cp')).catch(() => {});
   };
 
-  // ── HDF5 sidebar (file structure tree) ──────────────────────────────────────
-  // Loads the file tree via C++ get_file_tree and renders it into the sidebar.
-  // `which` is 'cp' (convert panel) or 'bp' (build panel).
-  let sbSelectedPath = { cp: null, bp: null };
+  // ── Points mode (flat x,y,z export, no tiling) ───────────────────────────────
+  let ppSelectedGroup   = null;
+  let ppAllDatasets     = [];
+  let ppCheckedDatasets = new Set();
 
-  function loadAndRenderSidebar(vfsPath, which) {
+  window.doConvertPoints = function() {
+    if (!currentFile) return;
+    errBanner.style.display = 'none';
+    document.getElementById('upload-screen').style.display = 'none';
+    document.getElementById('pp-file').textContent = currentFile.name;
+
+    ppSelectedGroup = null;
+    ppAllDatasets   = [];
+    ppCheckedDatasets.clear();
+    document.getElementById('pp-groups-section').style.display   = 'none';
+    document.getElementById('pp-datasets-section').style.display = 'none';
+    document.getElementById('pp-download-section').style.display = 'none';
+    document.getElementById('pp-groups-list').innerHTML   = '';
+    document.getElementById('pp-datasets-grid').innerHTML = '';
+
+    const panel = document.getElementById('points-panel');
+    panel.style.display = 'flex';
+    ensureMainMounted().then(path => loadAndRenderSidebar(path, 'pp')).catch(() => {});
+  };
+
+  window.ppSearchGroups = async function() {
+    const gname = document.getElementById('pp-group-name-input').value.trim();
+    if (!gname) return;
+
+    const btn = document.querySelector('#pp-search-row .pill-btn');
+    btn.disabled = true;
+    const stopTimer = withElapsed(s => {
+      btn.textContent = s > 0.4 ? 'Searching… (' + s.toFixed(1) + 's)' : 'Searching…';
+    });
+
+    try {
+      const path = await ensureMainMounted();
+      const { groups } = await callWorker('findGroups', { path, groupName: gname });
+
+      const list    = document.getElementById('pp-groups-list');
+      const section = document.getElementById('pp-groups-section');
+      list.innerHTML = '';
+      ppSelectedGroup = null;
+      document.getElementById('pp-datasets-section').style.display = 'none';
+      document.getElementById('pp-download-section').style.display = 'none';
+
+      if (groups.length === 0) {
+        list.innerHTML = '<div id="no-groups">No groups named "' + e(gname) + '" found.</div>';
+      } else {
+        groups.forEach(path => {
+          const item = document.createElement('div');
+          item.className    = 'group-item';
+          item.dataset.path = path;
+          item.innerHTML    = '<div class="group-dot"></div><span>' + e(path) + '</span>';
+          item.onclick      = () => ppSelectGroup(path);
+          list.appendChild(item);
+        });
+      }
+      section.style.display = 'block';
+    } catch (err) {
+      showError('Error searching groups: ' + err.message);
+    } finally {
+      stopTimer();
+      btn.disabled = false; btn.textContent = 'Search';
+    }
+  };
+
+  async function ppSelectGroup(path) {
+    document.querySelectorAll('#pp-groups-list .group-item').forEach(el => {
+      el.classList.toggle('selected', el.dataset.path === path);
+    });
+    ppSelectedGroup = path;
+
+    try {
+      const { datasets } = await callWorker('getDatasets', { path: mainPath, groupPath: path });
+      ppAllDatasets     = datasets;
+      ppCheckedDatasets = new Set(ppAllDatasets); // select all by default
+
+      ppRenderDatasets();
+      document.getElementById('pp-datasets-section').style.display = 'block';
+      document.getElementById('pp-download-section').style.display = 'block';
+    } catch (err) {
+      showError('Error loading datasets: ' + err.message);
+    }
+  }
+
+  function ppRenderDatasets() {
+    const grid = document.getElementById('pp-datasets-grid');
+    grid.innerHTML = '';
+    ppAllDatasets.forEach(name => {
+      const chip = document.createElement('label');
+      chip.className = 'ds-chip' + (ppCheckedDatasets.has(name) ? ' checked' : '');
+      chip.innerHTML  = '<input type="checkbox"' + (ppCheckedDatasets.has(name) ? ' checked' : '') + '>'
+                      + e(name);
+      chip.querySelector('input').onchange = ev => {
+        ev.target.checked ? ppCheckedDatasets.add(name) : ppCheckedDatasets.delete(name);
+        chip.classList.toggle('checked', ev.target.checked);
+        ppUpdateSelCount();
+      };
+      grid.appendChild(chip);
+    });
+    ppUpdateSelCount();
+  }
+
+  function ppUpdateSelCount() {
+    document.getElementById('pp-sel-count').textContent = ppCheckedDatasets.size + ' selected';
+  }
+
+  window.ppSelAll = function(checked) {
+    ppCheckedDatasets = checked ? new Set(ppAllDatasets) : new Set();
+    ppRenderDatasets();
+  };
+
+  window.doPointsDownload = async function() {
+    const n = ppCheckedDatasets.size;
+    if (!ppSelectedGroup || n === 0) return;
+
+    const statusDiv = document.getElementById('pp-convert-status');
+    const btn       = document.getElementById('btn-pp-download');
+    statusDiv.style.display = 'flex';
+    btn.disabled = true;
+    document.getElementById('pp-convert-status-text').textContent = 'Converting ' + n + ' fields…';
+
+    try {
+      const path  = await ensureMainMounted();
+      const names = ppAllDatasets.filter(d => ppCheckedDatasets.has(d));
+
+      const chunks = [];
+      const { written, readError, convertError } = await callWorker('convertToPointsBinary', {
+        path, group: ppSelectedGroup, gridJson: JSON.stringify(names)
+      }, chunk => chunks.push(chunk));
+
+      if (written < 0) {
+        showPointsError('Conversion failed: ' + (convertError || 'could not read datasets from the selected group.'));
+        return;
+      }
+      if (written === 0) {
+        showPointsError('Conversion produced no data — check that the selected fields contain compound {x,y,z} data.');
+        return;
+      }
+      if (readError || chunks.length === 0) {
+        showPointsError('Converted ' + written + ' bytes but failed to retrieve the result: ' + (readError || 'no data received'));
+        return;
+      }
+
+      const blob = new Blob(chunks, { type: 'application/octet-stream' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = 'points.bin';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    } catch (err) {
+      showPointsError('Unexpected error: ' + err.message);
+    } finally {
+      statusDiv.style.display = 'none';
+      btn.disabled = false;
+    }
+  };
+
+  function showPointsError(msg) {
+    let el = document.getElementById('points-error');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'points-error';
+      el.style.cssText = 'background:#2d1515;border:1px solid #f8514930;border-radius:8px;padding:12px 20px;font-size:13px;color:#ff7b72;margin-top:8px';
+      document.getElementById('pp-download-section').appendChild(el);
+    }
+    el.textContent = msg;
+    el.style.display = 'block';
+    setTimeout(() => { el.style.display = 'none'; }, 6000);
+  }
+
+  // ── HDF5 sidebar (file structure tree) ──────────────────────────────────────
+  // Loads the file tree via the worker's get_file_tree and renders it into the sidebar.
+  // `which` is 'cp' (convert panel) or 'bp' (build panel).
+  let sbSelectedPath = { cp: null, pp: null, bp: null };
+
+  async function loadAndRenderSidebar(path, which) {
     const treeEl = document.getElementById(which + '-tree');
-    treeEl.innerHTML = '<div class="sb-empty" style="color:#484f58">Loading…</div>';
     document.getElementById(which + '-actions').style.display = 'none';
     sbSelectedPath[which] = null;
+    const stopTimer = withElapsed(s => {
+      treeEl.innerHTML = '<div class="sb-empty" style="color:#484f58">Loading structure'
+        + (s > 0.4 ? ' — ' + s.toFixed(1) + 's…' : '…') + '</div>';
+    });
     try {
-      const ptr  = Module.ccall('get_file_tree', 'number', ['string'], [vfsPath]);
-      const root = JSON.parse(Module.UTF8ToString(ptr));
-      Module._free_result(ptr);
+      const { tree: root } = await callWorker('getFileTree', { path });
       if (!root) { treeEl.innerHTML = '<div class="sb-empty">Could not read file structure.</div>'; return; }
       treeEl.innerHTML = '';
       renderSbNode(root, treeEl, which, 0);
     } catch(e) {
       treeEl.innerHTML = '<div class="sb-empty">Error loading structure.</div>';
+    } finally {
+      stopTimer();
     }
   }
 
@@ -762,6 +1097,8 @@ createExplorer().then(Module => {
         inp.value = path;
         inp.dataset.auto = 'false';
       }
+    } else if (which === 'pp') {
+      ppSelectGroup(path);
     } else {
       if (target === 'pos') {
         document.getElementById('bp-pos-path').value = path;
@@ -787,20 +1124,23 @@ createExplorer().then(Module => {
   });
 
   window.goBack = function() {
-    removeFromVFS();
-    if (typeof tmplVfsPath !== 'undefined' && tmplVfsPath) {
-      try { Module.FS.unlink(tmplVfsPath); } catch(_) {}
-      tmplVfsPath = null;
+    unmountMain();
+    if (tmplPath) {
+      callWorker('unmount', { slot: 'tmpl' }).catch(() => {});
+      tmplPath = null;
     }
+    callWorker('unmount', { slot: 'posbin' }).catch(() => {});
+    callWorker('unmount', { slot: 'sfbin' }).catch(() => {});
     // Reset sidebars
-    ['cp','bp'].forEach(w => {
+    ['cp','pp','bp'].forEach(w => {
       const t = document.getElementById(w+'-tree');
-      if (t) t.innerHTML = '<div class="sb-empty">' + (w === 'cp' ? 'Load an HDF5 file to see its structure here.' : 'Load a reference .f5 to browse its structure here.') + '</div>';
+      if (t) t.innerHTML = '<div class="sb-empty">' + (w === 'bp' ? 'Load a reference .f5 to browse its structure here.' : 'Load an HDF5 file to see its structure here.') + '</div>';
       const a = document.getElementById(w+'-actions');
       if (a) a.style.display = 'none';
       sbSelectedPath[w] = null;
     });
     document.getElementById('convert-panel').style.display = 'none';
+    document.getElementById('points-panel').style.display  = 'none';
     document.getElementById('build-panel').style.display   = 'none';
     document.getElementById('result-frame').style.display  = 'none';
     document.getElementById('result-frame').srcdoc         = '';
@@ -814,14 +1154,14 @@ createExplorer().then(Module => {
     if (!gname) return;
 
     const btn = document.querySelector('#search-row .pill-btn');
-    btn.disabled = true; btn.textContent = 'Searching…';
+    btn.disabled = true;
+    const stopTimer = withElapsed(s => {
+      btn.textContent = s > 0.4 ? 'Searching… (' + s.toFixed(1) + 's)' : 'Searching…';
+    });
 
     try {
-      await ensureInVFS();
-      const ptr  = Module.ccall('find_groups', 'number', ['string', 'string'], [vfsPath, gname]);
-      const json = Module.UTF8ToString(ptr);
-      Module._free_result(ptr);
-      const groups = JSON.parse(json);
+      const path = await ensureMainMounted();
+      const { groups } = await callWorker('findGroups', { path, groupName: gname });
 
       const list    = document.getElementById('groups-list');
       const section = document.getElementById('groups-section');
@@ -846,6 +1186,7 @@ createExplorer().then(Module => {
     } catch (err) {
       showError('Error searching groups: ' + err.message);
     } finally {
+      stopTimer();
       btn.disabled = false; btn.textContent = 'Search';
     }
   };
@@ -858,10 +1199,8 @@ createExplorer().then(Module => {
     selectedGroup = path;
 
     try {
-      const ptr  = Module.ccall('get_datasets', 'number', ['string', 'string'], [vfsPath, path]);
-      const json = Module.UTF8ToString(ptr);
-      Module._free_result(ptr);
-      allDatasets = JSON.parse(json);
+      const { datasets } = await callWorker('getDatasets', { path: mainPath, groupPath: path });
+      allDatasets = datasets;
       checkedDatasets = new Set(allDatasets); // select all by default
 
       renderDatasets();
@@ -985,7 +1324,6 @@ createExplorer().then(Module => {
   }
 
   // ── Step 4: Download ──────────────────────────────────────────────────────────
-  const VFS_OUT = '/tiles_out.bin';
 
   // Builds a rows×cols array of dataset names, with null for empty positions.
   function buildGridArray(rows, cols) {
@@ -1016,27 +1354,28 @@ createExplorer().then(Module => {
     document.getElementById('convert-status-text').textContent = 'Converting ' + n + ' datasets…';
 
     try {
-      await ensureInVFS();
-      await new Promise(r => setTimeout(r, 0));
+      const path = await ensureMainMounted();
 
-      const written = Module.ccall(
-        'convert_to_binary_file', 'number',
-        ['string', 'string', 'string', 'number', 'number', 'string'],
-        [vfsPath, selectedGroup, JSON.stringify(grid), rows, cols, VFS_OUT]
-      );
+      const chunks = [];
+      const { written, readError, convertError } = await callWorker('convertToBinaryFile', {
+        path, group: selectedGroup, gridJson: JSON.stringify(grid), rows, cols
+      }, chunk => chunks.push(chunk));
 
-      if (written <= 0) {
-        showConvertError(written === 0
-          ? 'Conversion produced no data — check that the datasets contain compound {x,y,z} data.'
-          : 'Conversion failed — could not read datasets from the selected group.');
+      if (written < 0) {
+        showConvertError('Conversion failed: ' + (convertError || 'could not read datasets from the selected group.'));
+        return;
+      }
+      if (written === 0) {
+        showConvertError('Conversion produced no data — check that the datasets contain compound {x,y,z} data.');
+        return;
+      }
+      if (readError || chunks.length === 0) {
+        showConvertError('Converted ' + written + ' bytes but failed to retrieve the result: ' + (readError || 'no data received'));
         return;
       }
 
-      const bytes = Module.FS.readFile(VFS_OUT);
-      try { Module.FS.unlink(VFS_OUT); } catch(_) {}
-
       // Trigger download
-      const blob = new Blob([bytes], { type: 'application/octet-stream' });
+      const blob = new Blob(chunks, { type: 'application/octet-stream' });
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href     = url;
@@ -1055,7 +1394,6 @@ createExplorer().then(Module => {
   };
 
   // ── Download sf.bin ───────────────────────────────────────────────────────────
-  const VFS_SF_OUT = '/sf_out.bin';
 
   window.doDownloadSF = async function() {
     const n = checkedDatasets.size;
@@ -1072,34 +1410,33 @@ createExplorer().then(Module => {
     document.getElementById('convert-status-text').textContent = 'Exporting shape factors…';
 
     try {
-      await ensureInVFS();
-      await new Promise(r => setTimeout(r, 0));
+      const path = await ensureMainMounted();
 
       const dsL    = document.getElementById('sf-field-l').value.trim() || 'Linear';
       const dsP    = document.getElementById('sf-field-p').value.trim() || 'Planarity';
       const dsS    = document.getElementById('sf-field-s').value.trim() || 'Spherical';
       const sfPath = document.getElementById('sf-parent-path').value.trim() || '/';
 
-      // Signature: h5path, datasets_json, rows, cols,
-      //            sf_parent, grp_l, grp_p, grp_s, out_path
-      const written = Module.ccall(
-        'convert_sf_to_binary_file', 'number',
-        ['string','string','number','number','string','string','string','string','string'],
-        [vfsPath, JSON.stringify(grid), rows, cols,
-         sfPath, dsL, dsP, dsS, VFS_SF_OUT]
-      );
+      const chunks = [];
+      const { written, readError, convertError } = await callWorker('convertSfToBinaryFile', {
+        path, gridJson: JSON.stringify(grid), rows, cols,
+        sfParent: sfPath, grpL: dsL, grpP: dsP, grpS: dsS
+      }, chunk => chunks.push(chunk));
 
-      if (written <= 0) {
-        showConvertError(written === 0
-          ? 'Shape factors group produced no data — check field names and dataset structure.'
-          : 'Failed to read shape factors from the selected group.');
+      if (written < 0) {
+        showConvertError('Failed to read shape factors: ' + (convertError || 'from the selected group.'));
+        return;
+      }
+      if (written === 0) {
+        showConvertError('Shape factors group produced no data — check field names and dataset structure.');
+        return;
+      }
+      if (readError || chunks.length === 0) {
+        showConvertError('Converted ' + written + ' bytes but failed to retrieve the result: ' + (readError || 'no data received'));
         return;
       }
 
-      const bytes = Module.FS.readFile(VFS_SF_OUT);
-      try { Module.FS.unlink(VFS_SF_OUT); } catch(_) {}
-
-      const blob = new Blob([bytes], { type: 'application/octet-stream' });
+      const blob = new Blob(chunks, { type: 'application/octet-stream' });
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href     = url;
@@ -1133,19 +1470,14 @@ createExplorer().then(Module => {
   // ── Build HDF5 mode ──────────────────────────────────────────────────────────
   let posBinFile  = null;
   let sfBinFile   = null;
-  let tmplVfsPath = null;
-
-  const VFS_TMPL    = '/tmpl.h5';
-  const VFS_POS_BIN = '/pos_in.bin';
-  const VFS_SF_BIN  = '/sf_in.bin';
-  const VFS_BP_OUT  = '/build_out.h5';
+  let tmplPath    = null;
 
   window.doBuild = function() {
     errBanner.style.display = 'none';
     document.getElementById('upload-screen').style.display = 'none';
 
     posBinFile = null; sfBinFile = null;
-    if (tmplVfsPath) { try { Module.FS.unlink(tmplVfsPath); } catch(_) {} tmplVfsPath = null; }
+    if (tmplPath) { callWorker('unmount', { slot: 'tmpl' }).catch(() => {}); tmplPath = null; }
 
     document.getElementById('pos-drop').classList.remove('has-file');
     document.getElementById('pos-drop-name').textContent = '';
@@ -1192,14 +1524,10 @@ createExplorer().then(Module => {
     }
 
     // Scan the binary to derive tile count and grid dimensions automatically
-    const VFS_SCAN = '/scan_tmp.bin';
     try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      Module.FS.writeFile(VFS_SCAN, bytes);
-      const ptr  = Module.ccall('scan_bin_tiles', 'number', ['string'], [VFS_SCAN]);
-      const info = JSON.parse(Module.UTF8ToString(ptr));
-      Module._free_result(ptr);
-      try { Module.FS.unlink(VFS_SCAN); } catch(_) {}
+      const slot = which === 'pos' ? 'posbin' : 'sfbin';
+      const { path } = await callWorker('mount', { slot, file });
+      const { info } = await callWorker('scanBinTiles', { path });
 
       if (info.count > 0) {
         document.getElementById('bp-name-count').value = info.count;
@@ -1217,7 +1545,8 @@ createExplorer().then(Module => {
         }
       }
     } catch(e) {
-      try { Module.FS.unlink(VFS_SCAN); } catch(_) {}
+      // Scan failed — leave grid/name fields as-is; doBuildDownload will still
+      // attempt the conversion and surface a clearer error if the file is bad.
     }
   };
 
@@ -1227,23 +1556,33 @@ createExplorer().then(Module => {
   };
 
   async function loadTemplateFile(file) {
-    if (tmplVfsPath) { try { Module.FS.unlink(tmplVfsPath); } catch(_) {} }
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    Module.FS.writeFile(VFS_TMPL, bytes);
-    tmplVfsPath = VFS_TMPL;
+    const { path } = await callWorker('mount', { slot: 'tmpl', file });
+    tmplPath = path;
     document.getElementById('tmpl-name').textContent    = '✓ ' + file.name;
     document.getElementById('tmpl-name').style.display  = 'inline';
     document.getElementById('tmpl-search-area').style.display = 'flex';
-    loadAndRenderSidebar(VFS_TMPL, 'bp');
+    loadAndRenderSidebar(tmplPath, 'bp');
   }
 
-  window.searchTmplGroups = function() {
-    if (!tmplVfsPath) return;
+  window.searchTmplGroups = async function() {
+    if (!tmplPath) return;
     const gname = document.getElementById('tmpl-search-input').value.trim();
     if (!gname) return;
-    const ptr    = Module.ccall('find_groups', 'number', ['string','string'], [tmplVfsPath, gname]);
-    const groups = JSON.parse(Module.UTF8ToString(ptr));
-    Module._free_result(ptr);
+
+    const btn = document.querySelector('#tmpl-search-area .pill-btn');
+    const origLabel = btn.textContent;
+    btn.disabled = true;
+    const stopTimer = withElapsed(s => {
+      btn.textContent = s > 0.4 ? 'Searching… (' + s.toFixed(1) + 's)' : 'Searching…';
+    });
+
+    let groups;
+    try {
+      ({ groups } = await callWorker('findGroups', { path: tmplPath, groupName: gname }));
+    } finally {
+      stopTimer();
+      btn.disabled = false; btn.textContent = origLabel;
+    }
     // Results are already in BFS order (shortest-path-first) from find_groups().
     // No re-sorting — let the user choose the right one.
 
@@ -1328,9 +1667,9 @@ createExplorer().then(Module => {
     document.getElementById('build-status-text').textContent = 'Building HDF5…';
 
     try {
-      if (posBinFile) Module.FS.writeFile(VFS_POS_BIN, new Uint8Array(await posBinFile.arrayBuffer()));
-      if (sfBinFile)  Module.FS.writeFile(VFS_SF_BIN,  new Uint8Array(await sfBinFile.arrayBuffer()));
-      await new Promise(r => setTimeout(r, 0));
+      let posBinPath = '', sfBinPath = '';
+      if (posBinFile) posBinPath = (await callWorker('mount', { slot: 'posbin', file: posBinFile })).path;
+      if (sfBinFile)  sfBinPath  = (await callWorker('mount', { slot: 'sfbin',  file: sfBinFile  })).path;
 
       const posPath  = document.getElementById('bp-pos-path').value.trim()  || '/Positions';
       const sfParent = document.getElementById('bp-sf-parent').value.trim() || '/';
@@ -1338,25 +1677,22 @@ createExplorer().then(Module => {
       const sfP      = document.getElementById('bp-sf-p').value.trim() || 'Planarity';
       const sfS      = document.getElementById('bp-sf-s').value.trim() || 'Spherical';
 
-      const ret = Module.ccall(
-        'convert_bins_to_hdf5', 'number',
-        ['string','string','string','number','number','string','string','string','string','string','string'],
-        [posBinFile ? VFS_POS_BIN : '', sfBinFile ? VFS_SF_BIN : '',
-         JSON.stringify(names), rows, cols,
-         posPath, sfParent, sfL, sfP, sfS, VFS_BP_OUT]
-      );
+      const chunks = [];
+      const { ret, readError, convertError } = await callWorker('convertBinsToHdf5', {
+        posPath: posBinPath, sfPath: sfBinPath,
+        namesJson: JSON.stringify(names), rows, cols,
+        posGroupPath: posPath, sfParentPath: sfParent, grpL: sfL, grpP: sfP, grpS: sfS
+      }, chunk => chunks.push(chunk));
 
-      if (posBinFile) { try { Module.FS.unlink(VFS_POS_BIN); } catch(_) {} }
-      if (sfBinFile)  { try { Module.FS.unlink(VFS_SF_BIN);  } catch(_) {} }
-
-      if (ret < 0)  { showBuildError('Build failed — could not process binary files.'); return; }
+      if (ret < 0)  { showBuildError('Build failed: ' + (convertError || 'could not process binary files.')); return; }
       if (ret === 0){ showBuildError('No data written — check binary files and dataset names.'); return; }
-
-      const bytes = Module.FS.readFile(VFS_BP_OUT);
-      try { Module.FS.unlink(VFS_BP_OUT); } catch(_) {}
+      if (readError || chunks.length === 0) {
+        showBuildError('Built ' + ret + ' bytes but failed to retrieve the result: ' + (readError || 'no data received'));
+        return;
+      }
 
       const outName = (document.getElementById('bp-out-name').value.trim() || 'output') + '.h5';
-      const blob = new Blob([bytes], { type: 'application/octet-stream' });
+      const blob = new Blob(chunks, { type: 'application/octet-stream' });
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href = url; a.download = outName;
@@ -1364,8 +1700,6 @@ createExplorer().then(Module => {
       setTimeout(() => URL.revokeObjectURL(url), 1000);
 
     } catch (err) {
-      if (posBinFile) { try { Module.FS.unlink(VFS_POS_BIN); } catch(_) {} }
-      if (sfBinFile)  { try { Module.FS.unlink(VFS_SF_BIN);  } catch(_) {} }
       showBuildError('Unexpected error: ' + err.message);
     } finally {
       statusDiv.style.display = 'none';
@@ -1391,10 +1725,7 @@ createExplorer().then(Module => {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-}).catch(err => {
-  document.getElementById('wasm-loading').innerHTML =
-    '<div style="color:#ff7b72;font-size:14px">Failed to load WASM module: ' + err + '</div>';
-});
+})();
 </script>
 </body>
 </html>

@@ -174,23 +174,6 @@
       }
     }
 
-    /* ── Progress bar ── */
-    #progress-wrap {
-      width: 240px;
-      height: 4px;
-      background: #21262d;
-      border-radius: 2px;
-      display: none;
-    }
-
-    #progress-bar {
-      height: 100%;
-      background: #3fb950;
-      border-radius: 2px;
-      width: 0%;
-      transition: width .1s linear;
-    }
-
     /* ── Error ── */
     #error-banner {
       display: none;
@@ -202,16 +185,6 @@
       color: #ff7b72;
       max-width: 480px;
       text-align: center;
-    }
-
-    /* ── Result frame ── */
-    #result-frame {
-      display: none;
-      width: 100vw;
-      height: 100vh;
-      border: none;
-      position: fixed;
-      inset: 0
     }
 
     /* ── WASM loading overlay ── */
@@ -249,6 +222,68 @@
     .back-link:hover {
       color: #3fb950;
       border-color: #3fb950
+    }
+
+    /* ── 3D viewer (rendered directly on this page — no iframe/srcdoc) ── */
+    #viewer-canvas {
+      display: none;
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #viewer-ui {
+      display: none;
+      position: fixed;
+      top: 56px;
+      /* clears the "← HDF5 Tools" back-link, which sits at top:14px in the
+         same corner — the viewer used to render inside its own iframe with
+         its own top-left corner, so this overlap didn't exist before. */
+      left: 16px;
+      flex-direction: column;
+      gap: 10px;
+      pointer-events: none;
+    }
+
+    #btn-color {
+      pointer-events: all;
+      background: #1f6feb;
+      color: #e6edf3;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background .2s;
+    }
+
+    #btn-color:hover {
+      background: #388bfd
+    }
+
+    .chip {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 12px;
+      color: #7d8590;
+      line-height: 1.5;
+    }
+
+    .chip b {
+      color: #e6edf3
+    }
+
+    #viewer-hint {
+      display: none;
+      position: fixed;
+      bottom: 16px;
+      left: 16px;
+      font-size: 11px;
+      color: #3d444d;
     }
   </style>
 </head>
@@ -299,24 +334,81 @@
   <div id="status">
     <div class="spinner"></div>
     <span id="status-text">Processing…</span>
-    <div id="progress-wrap">
-      <div id="progress-bar"></div>
-    </div>
   </div>
 
-  <iframe id="result-frame"></iframe>
+  <canvas id="viewer-canvas"></canvas>
+  <div id="viewer-ui">
+    <button id="btn-color" onclick="toggleColor()">Toggle Colors</button>
+    <div class="chip"><b id="vc-total">0</b> points &nbsp;·&nbsp; <b id="vc-tiles">0</b> tiles (<span
+        id="vc-dims"></span>)</div>
+    <div class="chip">Mode: <b id="vc-mode">Tiles</b></div>
+  </div>
+  <div id="viewer-hint">Drag: rotate &nbsp;|&nbsp; Right-drag / two-finger: pan &nbsp;|&nbsp; Scroll / pinch: zoom
+  </div>
 
-  <script src="gridvis.js"></script>
   <script>
-    createGridVis().then(Module => {
+    // The WASM module runs in a Worker so uploaded files can be mounted via
+    // WORKERFS (see gridvis-worker.js) — reads happen lazily straight from
+    // the File object, and parsed vertex data streams back in small chunks
+    // instead of being embedded as one giant base64 HTML string. That's
+    // what lets multi-gigabyte point clouds load at all.
+    //
+    // Browsers refuse to construct a Worker from a file:// page (origin
+    // "null"), so this page must be served over HTTP — even just a local
+    // static server.
+    if (location.protocol === 'file:') {
+      document.getElementById('wasm-loading').innerHTML =
+        '<div style="max-width:480px;text-align:center;color:#ff7b72;font-size:14px;line-height:1.6">' +
+        'This page can\'t run when opened directly as a file — browsers block Web Workers on file:// URLs.<br><br>' +
+        'Serve this folder over HTTP instead, e.g. from a terminal in <code>wasm/web/</code>:<br>' +
+        '<code style="display:inline-block;margin-top:8px;padding:6px 10px;background:#161b22;border-radius:6px">python3 -m http.server 8000</code><br><br>' +
+        'then open <code>http://localhost:8000/</code>.' +
+        '</div>';
+      throw new Error('Grid Visualizer cannot run from a file:// URL — serve wasm/web/ over HTTP instead.');
+    }
 
-      // ── WASM ready ───────────────────────────────────────────────────────────────
-      document.getElementById('wasm-loading').style.opacity = '0';
-      setTimeout(() => {
-        document.getElementById('wasm-loading').style.display = 'none';
-        document.getElementById('upload-screen').style.display = 'flex';
-      }, 300);
+    const worker = new Worker('gridvis-worker.js');
+    let nextReqId = 1;
+    const pending = new Map();
 
+    worker.onmessage = (ev) => {
+      const data = ev.data;
+      if (data.type === 'ready') {
+        document.getElementById('wasm-loading').style.opacity = '0';
+        setTimeout(() => {
+          document.getElementById('wasm-loading').style.display = 'none';
+          document.getElementById('upload-screen').style.display = 'flex';
+        }, 300);
+        return;
+      }
+      const p = pending.get(data.id);
+      if (!p) return;
+      // Vertex data streams back as a series of small chunk messages (see
+      // js_emit_chunk in gridvis.cpp) tagged with which buffer (kind) they
+      // belong to, followed by one final summary message.
+      if (data.chunk !== undefined) {
+        if (p.onChunk) p.onChunk(data.chunk, data.kind);
+        return;
+      }
+      pending.delete(data.id);
+      if (data.ok) p.resolve(data);
+      else p.reject(new Error(data.error || 'Worker error'));
+    };
+
+    worker.onerror = (ev) => {
+      document.getElementById('wasm-loading').innerHTML =
+        '<div style="color:#ff7b72;font-size:14px">Failed to load WASM module: ' + (ev.message || ev) + '</div>';
+    };
+
+    function callWorker(type, data, onChunk) {
+      return new Promise((resolve, reject) => {
+        const id = nextReqId++;
+        pending.set(id, { resolve, reject, onChunk });
+        worker.postMessage(Object.assign({ id, type }, data || {}));
+      });
+    }
+
+    (function () {
       let tilesFile = null, sfFile = null;
 
       // ── File inputs ──────────────────────────────────────────────────────────────
@@ -351,9 +443,6 @@
       const errBanner = document.getElementById('error-banner');
       const statusEl = document.getElementById('status');
       const statusText = document.getElementById('status-text');
-      const progressWrap = document.getElementById('progress-wrap');
-      const progressBar = document.getElementById('progress-bar');
-      const frame = document.getElementById('result-frame');
 
       function showError(msg) {
         document.getElementById('upload-screen').style.display = 'flex';
@@ -362,37 +451,17 @@
         errBanner.textContent = msg;
       }
 
-      function setProgress(pct) {
-        progressWrap.style.display = 'block';
-        progressBar.style.width = pct + '%';
-      }
-
-      // FIX A: Stream file into WASM VFS in chunks so we never hold the entire
-      // file as both an ArrayBuffer AND a Uint8Array simultaneously in JS heap.
-      // We write the WASM FS file in 4 MB slices, releasing each slice after write.
-      async function streamFileToVFS(file, vfsPath) {
-        const CHUNK = 4 * 1024 * 1024; // 4 MB chunks
-        const size = file.size;
-
-        // Open the file in WASM FS for writing
-        const stream = Module.FS.open(vfsPath, 'w');
-
-        let offset = 0;
-        while (offset < size) {
-          const end = Math.min(offset + CHUNK, size);
-          const slice = file.slice(offset, end);
-          // FIX B: Use arrayBuffer() on the slice directly — only CHUNK bytes in JS
-          // at a time, not the full file. Each chunk is released after writeFile.
-          const buf = await slice.arrayBuffer();
-          const bytes = new Uint8Array(buf);
-          Module.FS.write(stream, bytes, 0, bytes.length, offset);
-          offset = end;
-          setProgress((offset / size) * 100);
-          // Yield to browser between chunks so the UI stays responsive
-          await new Promise(r => setTimeout(r, 0));
-        }
-
-        Module.FS.close(stream);
+      // Joins the small Uint8Array chunks for one vertex buffer into a
+      // single Float32Array. This is the only copy left in the whole
+      // pipeline — everything upstream (WORKERFS reads, WASM-side parsing,
+      // the worker transfer) deals in bounded 64MB pieces.
+      function concatToFloat32(chunks) {
+        let total = 0;
+        for (const c of chunks) total += c.length;
+        const out = new Uint8Array(total);
+        let off = 0;
+        for (const c of chunks) { out.set(c, off); off += c.length; }
+        return new Float32Array(out.buffer, out.byteOffset, out.length / 4);
       }
 
       window.runVisualize = async function () {
@@ -401,53 +470,241 @@
         errBanner.style.display = 'none';
         document.getElementById('upload-screen').style.display = 'none';
         statusEl.style.display = 'flex';
-        progressWrap.style.display = 'none';
 
         try {
-          statusText.textContent = `Streaming ${tilesFile.name} into WASM…`;
-          await streamFileToVFS(tilesFile, '/tiles.bin');
+          statusText.textContent = `Reading ${tilesFile.name}…`;
+          const { path: tilesPath } = await callWorker('mount', { slot: 'tiles', file: tilesFile });
 
-          const sfPath = sfFile ? '/sf.bin' : '';
+          let sfPath = '';
           if (sfFile) {
-            statusText.textContent = `Streaming ${sfFile.name} into WASM…`;
-            progressBar.style.width = '0%';
-            await streamFileToVFS(sfFile, '/sf.bin');
+            statusText.textContent = `Reading ${sfFile.name}…`;
+            const r = await callWorker('mount', { slot: 'sf', file: sfFile });
+            sfPath = r.path;
           }
 
-          // FIX C: Unlink VFS files AFTER WASM reads them but inside the C++
-          // call (handled in gridvis.cpp). Here we just call visualize.
           statusText.textContent = 'Building point cloud…';
-          progressWrap.style.display = 'none';
-          // Yield so the status text renders before the synchronous WASM work
-          await new Promise(r => setTimeout(r, 20));
-
-          const ptr = Module.ccall('visualize', 'number', ['string', 'string'], ['/tiles.bin', sfPath]);
-          const html = Module.UTF8ToString(ptr);
-          Module._free_result(ptr);
-
-          // FIX D: Clean up VFS after WASM is done — C++ already freed its own
-          // in-memory structures; now free the FS copies too.
-          try { Module.FS.unlink('/tiles.bin'); } catch (_) { }
-          try { if (sfFile) Module.FS.unlink('/sf.bin'); } catch (_) { }
-
-          if (!html.startsWith('<!DOCTYPE')) {
-            showError(html.replace(/<[^>]*>/g, '').trim());
-            return;
-          }
+          const chunksByKind = { 0: [], 1: [], 2: [] };
+          const { meta } = await callWorker('visualize', { tilesPath, sfPath },
+            (chunk, kind) => { chunksByKind[kind].push(chunk); });
 
           statusEl.style.display = 'none';
-          frame.srcdoc = html;
-          frame.style.display = 'block';
+
+          const pos = concatToFloat32(chunksByKind[0]);
+          const colTile = concatToFloat32(chunksByKind[1]);
+          const colSf = meta.hasSf ? concatToFloat32(chunksByKind[2]) : new Float32Array(0);
+
+          startViewer(meta, pos, colTile, colSf);
 
         } catch (err) {
           showError('Unexpected error: ' + (err.message || err));
         }
       };
 
-    }).catch(err => {
-      document.getElementById('wasm-loading').innerHTML =
-        '<div style="color:#ff7b72;font-size:14px">Failed to load WASM module: ' + err + '</div>';
-    });
+      // ── 3D viewer ────────────────────────────────────────────────────────────────
+      // Static WebGL viewer fed directly by the parsed Float32Array buffers
+      // above — no per-file generated HTML/JS, no base64 decode.
+      const canvas = document.getElementById('viewer-canvas');
+      let gl = null, bufPos, bufTile, bufSf, aPos, aCol, uMvp;
+      let N = 0, HAS_SF = false, colorMode = 1;
+      let theta = 0.5, phi = 1.1, radius = 3.0, panX = 0, panY = 0;
+
+      function norm(v) { const l = Math.hypot(...v) || 1; return v.map(x => x / l); }
+      function cross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+      function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+      function sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+
+      function lookAt(eye, target) {
+        const up = [0, 1, 0];
+        const z = norm(sub(eye, target));
+        const x = norm(cross(up, z));
+        const y = cross(z, x);
+        return new Float32Array([
+          x[0], y[0], z[0], 0,
+          x[1], y[1], z[1], 0,
+          x[2], y[2], z[2], 0,
+          -dot(x, eye), -dot(y, eye), -dot(z, eye), 1
+        ]);
+      }
+
+      function perspective(fov, aspect, near, far) {
+        const f = 1 / Math.tan(fov * 0.5), d = near - far;
+        return new Float32Array([
+          f / aspect, 0, 0, 0,
+          0, f, 0, 0,
+          0, 0, (near + far) / d, -1,
+          0, 0, 2 * near * far / d, 0
+        ]);
+      }
+
+      function mul4(a, b) {
+        const r = new Float32Array(16);
+        for (let c = 0; c < 4; c++)
+          for (let row = 0; row < 4; row++)
+            for (let k = 0; k < 4; k++)
+              r[c * 4 + row] += a[k * 4 + row] * b[c * 4 + k];
+        return r;
+      }
+
+      function getEye() {
+        const sp = Math.sin(phi), cp = Math.cos(phi);
+        return [panX + radius * sp * Math.cos(theta), panY + radius * cp, radius * sp * Math.sin(theta)];
+      }
+
+      function render() {
+        if (!gl) return;
+        const w = canvas.clientWidth * devicePixelRatio | 0;
+        const h = canvas.clientHeight * devicePixelRatio | 0;
+        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+        gl.viewport(0, 0, w, h);
+        gl.clearColor(0.051, 0.067, 0.09, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        gl.enable(gl.DEPTH_TEST);
+
+        const eye = getEye();
+        const target = [panX, panY, 0];
+        const V = lookAt(eye, target);
+        const P = perspective(Math.PI / 3, w / h, 0.01, 100);
+        const MVP = mul4(P, V);
+
+        gl.uniformMatrix4fv(uMvp, false, MVP);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, bufPos);
+        gl.enableVertexAttribArray(aPos);
+        gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorMode === 0 ? bufSf : bufTile);
+        gl.enableVertexAttribArray(aCol);
+        gl.vertexAttribPointer(aCol, 3, gl.FLOAT, false, 0, 0);
+
+        gl.drawArrays(gl.POINTS, 0, N);
+      }
+
+      window.toggleColor = function () {
+        colorMode = HAS_SF ? (colorMode === 0 ? 1 : 0) : 1;
+        document.getElementById('vc-mode').textContent = (colorMode === 0 ? 'Shape Factors' : 'Tiles');
+        render();
+      };
+
+      // Mouse/touch listeners are attached once — the canvas element always
+      // exists (just hidden until a file is visualized).
+      let drag = null;
+      canvas.addEventListener('mousedown', e => {
+        drag = { x: e.clientX, y: e.clientY, btn: e.button, theta, phi, panX, panY };
+        e.preventDefault();
+      });
+      canvas.addEventListener('contextmenu', e => e.preventDefault());
+      window.addEventListener('mousemove', e => {
+        if (!drag) return;
+        const dx = (e.clientX - drag.x) * 0.005;
+        const dy = (e.clientY - drag.y) * 0.005;
+        if (drag.btn === 0) {
+          theta = drag.theta - dx;
+          phi = Math.max(0.05, Math.min(Math.PI - 0.05, drag.phi + dy));
+        } else {
+          panX = drag.panX - dx * radius;
+          panY = drag.panY + dy * radius;
+        }
+        render();
+      });
+      window.addEventListener('mouseup', () => drag = null);
+      canvas.addEventListener('wheel', e => {
+        radius = Math.max(0.1, radius * (1 + e.deltaY * 0.001));
+        render();
+        e.preventDefault();
+      }, { passive: false });
+
+      let lastTouches = null;
+      canvas.addEventListener('touchstart', e => {
+        lastTouches = Array.from(e.touches).map(t => ({ x: t.clientX, y: t.clientY }));
+        e.preventDefault();
+      }, { passive: false });
+      canvas.addEventListener('touchmove', e => {
+        const ts = Array.from(e.touches).map(t => ({ x: t.clientX, y: t.clientY }));
+        if (ts.length === 1 && lastTouches && lastTouches.length === 1) {
+          theta -= (ts[0].x - lastTouches[0].x) * 0.005;
+          phi = Math.max(0.05, Math.min(Math.PI - 0.05, phi + (ts[0].y - lastTouches[0].y) * 0.005));
+        } else if (ts.length === 2 && lastTouches && lastTouches.length === 2) {
+          const d0 = Math.hypot(lastTouches[0].x - lastTouches[1].x, lastTouches[0].y - lastTouches[1].y);
+          const d1 = Math.hypot(ts[0].x - ts[1].x, ts[0].y - ts[1].y);
+          if (d0 > 0) radius = Math.max(0.1, radius * d0 / d1);
+        }
+        lastTouches = ts;
+        render();
+        e.preventDefault();
+      }, { passive: false });
+      window.addEventListener('resize', render);
+
+      function startViewer(meta, pos, colTile, colSf) {
+        N = meta.total;
+        HAS_SF = meta.hasSf;
+        colorMode = HAS_SF ? 0 : 1;
+
+        document.getElementById('vc-total').textContent = N.toLocaleString();
+        document.getElementById('vc-tiles').textContent = (meta.nx * meta.ny).toLocaleString();
+        document.getElementById('vc-dims').textContent = meta.nx + '×' + meta.ny;
+        document.getElementById('vc-mode').textContent = HAS_SF ? 'Shape Factors' : 'Tiles';
+
+        gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        if (!gl) {
+          showError('WebGL not supported in this browser.');
+          return;
+        }
+
+        const VSRC = `
+attribute vec3 a_pos;
+attribute vec3 a_col;
+uniform mat4 u_mvp;
+varying vec3 v_col;
+void main() {
+  gl_Position = u_mvp * vec4(a_pos, 1.0);
+  gl_PointSize = 2.0;
+  v_col = a_col;
+}`;
+
+        const FSRC = `
+precision mediump float;
+varying vec3 v_col;
+void main() {
+  vec2 p = gl_PointCoord - vec2(0.5);
+  if (dot(p, p) > 0.25) discard;
+  gl_FragColor = vec4(v_col, 1.0);
+}`;
+
+        function compile(src, type) {
+          const s = gl.createShader(type);
+          gl.shaderSource(s, src);
+          gl.compileShader(s);
+          return s;
+        }
+
+        const prog = gl.createProgram();
+        gl.attachShader(prog, compile(VSRC, gl.VERTEX_SHADER));
+        gl.attachShader(prog, compile(FSRC, gl.FRAGMENT_SHADER));
+        gl.linkProgram(prog);
+        gl.useProgram(prog);
+
+        aPos = gl.getAttribLocation(prog, 'a_pos');
+        aCol = gl.getAttribLocation(prog, 'a_col');
+        uMvp = gl.getUniformLocation(prog, 'u_mvp');
+
+        function makeVbo(data) {
+          const buf = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+          gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+          return buf;
+        }
+
+        bufPos = makeVbo(pos);
+        bufTile = makeVbo(colTile);
+        bufSf = makeVbo(colSf);
+
+        canvas.style.display = 'block';
+        document.getElementById('viewer-ui').style.display = 'flex';
+        document.getElementById('viewer-hint').style.display = 'block';
+
+        render();
+      }
+    })();
   </script>
 </body>
 
