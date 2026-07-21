@@ -57,8 +57,15 @@ jobs:
 
       - name: Configure + build WASM data_converter
         run: |
-          rm -f  data_converter/wasm/build/CMakeCache.txt
-          rm -rf data_converter/wasm/build/CMakeFiles
+          # setup-emsdk installs into a freshly-randomised temp dir every run,
+          # so a CMakeCache.txt (or a nested ExternalProject_Add binary dir,
+          # e.g. hdf5_build/) restored from actions/cache can point at a
+          # toolchain path that no longer exists. Clear every CMakeCache.txt/
+          # CMakeFiles in the tree, not just the top-level one, so every
+          # nested sub-build reconfigures against this run's actual paths.
+          mkdir -p data_converter/wasm/build
+          find data_converter/wasm/build -name CMakeCache.txt -delete
+          find data_converter/wasm/build -depth -name CMakeFiles -type d -exec rm -rf {} +
           emcmake cmake -S data_converter/wasm \
                         -B data_converter/wasm/build \
                         -DCMAKE_BUILD_TYPE=Release \
@@ -75,6 +82,10 @@ jobs:
 
       - name: Configure + build WASM visualizer
         run: |
+          # Same stale-toolchain-path risk as the data_converter build above.
+          mkdir -p visualizer/wasm/build
+          find visualizer/wasm/build -name CMakeCache.txt -delete
+          find visualizer/wasm/build -depth -name CMakeFiles -type d -exec rm -rf {} +
           emcmake cmake -S visualizer/wasm \
                         -B visualizer/wasm/build \
                         -DCMAKE_BUILD_TYPE=Release \
@@ -86,10 +97,12 @@ jobs:
         run: |
           mkdir -p site/convert site/visualize
           cp web/index.html site/
-          cp data_converter/wasm/web/index.html site/convert/
-          cp data_converter/wasm/web/explorer.js  site/convert/
-          cp visualizer/wasm/web/index.html       site/visualize/
-          cp visualizer/wasm/web/gridvis.js       site/visualize/
+          cp data_converter/wasm/web/index.html         site/convert/
+          cp data_converter/wasm/web/explorer.js        site/convert/
+          cp data_converter/wasm/web/explorer-worker.js site/convert/
+          cp visualizer/wasm/web/index.html         site/visualize/
+          cp visualizer/wasm/web/gridvis.js         site/visualize/
+          cp visualizer/wasm/web/gridvis-worker.js  site/visualize/
 
       # ── Deploy ────────────────────────────────────────────────────────────
       - name: Setup Pages

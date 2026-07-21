@@ -576,7 +576,15 @@
         gl.enableVertexAttribArray(aCol);
         gl.vertexAttribPointer(aCol, 3, gl.FLOAT, false, 0, 0);
 
-        gl.drawArrays(gl.POINTS, 0, N);
+        // Some browsers cap the vertex count for a single draw call — Firefox
+        // defaults to 30,000,000 (webgl.max-vert-ids-per-draw) and warns/no-ops
+        // past that. Batch into multiple drawArrays calls instead of one
+        // covering the whole point cloud; the buffer bindings above stay put
+        // between batches since only `first`/`count` change.
+        const MAX_VERTS_PER_DRAW = 10_000_000;
+        for (let start = 0; start < N; start += MAX_VERTS_PER_DRAW) {
+          gl.drawArrays(gl.POINTS, start, Math.min(MAX_VERTS_PER_DRAW, N - start));
+        }
       }
 
       window.toggleColor = function () {
