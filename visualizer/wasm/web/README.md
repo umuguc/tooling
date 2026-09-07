@@ -28,6 +28,10 @@ then open `http://localhost:8000/` in a browser.
    `[0, 1]`, giving you a second coloring mode.
 3. Click **Visualize**.
 
+Don't have a file handy? Click **Preload sample data (Stanford bunny)**
+instead — it fetches the bundled `data/bunny_tiles.bin` and
+`data/bunny_shape.bin` and visualizes them immediately, no drop required.
+
 Once loaded you get an interactive 3D point-cloud viewer:
 
 * **Drag** to rotate, **right-drag / two-finger drag** to pan, **scroll /

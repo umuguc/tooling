@@ -103,6 +103,7 @@ jobs:
           cp visualizer/wasm/web/index.html         site/visualize/
           cp visualizer/wasm/web/gridvis.js         site/visualize/
           cp visualizer/wasm/web/gridvis-worker.js  site/visualize/
+          cp -r visualizer/wasm/web/data            site/visualize/
 
       # ── Deploy ────────────────────────────────────────────────────────────
       - name: Setup Pages
