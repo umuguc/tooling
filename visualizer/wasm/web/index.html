@@ -169,8 +169,14 @@
       background: #21262d;
     }
 
-    #btn-preload {
+    .preload-row {
       width: 100%;
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn-preload {
+      flex: 1;
       padding: 12px;
       border-radius: 8px;
       background: #161b22;
@@ -182,12 +188,12 @@
       transition: border-color .2s, color .2s;
     }
 
-    #btn-preload:hover:not(:disabled) {
+    .btn-preload:hover:not(:disabled) {
       border-color: #3fb950;
       color: #3fb950;
     }
 
-    #btn-preload:disabled {
+    .btn-preload:disabled {
       color: #484f58;
       cursor: not-allowed
     }
@@ -371,9 +377,12 @@
 
     <button id="btn-visualize" disabled onclick="runVisualize()">Visualize</button>
 
-    <div class="divider">or</div>
+    <div class="divider">or preload sample data</div>
 
-    <button id="btn-preload" onclick="preloadSample()">Preload sample data (Stanford bunny)</button>
+    <div class="preload-row">
+      <button class="btn-preload" id="btn-preload-bunny" onclick="preloadSample('bunny')">Load Bunny</button>
+      <button class="btn-preload" id="btn-preload-teapot" onclick="preloadSample('teapot')">Load Teapot</button>
+    </div>
 
     <div id="error-banner"></div>
   </div>
@@ -550,14 +559,15 @@
       };
 
       // ── Preload sample data ──────────────────────────────────────────────────────
-      // Bundled Stanford-bunny sample (tiles + shape factors) so the viewer can be
-      // tried with one click, with no files of your own on hand. Fetched as plain
-      // static assets — `data/` sits next to this page both when served locally
-      // (see README) and once deployed to GitHub Pages — and wrapped as File
-      // objects so they flow through the exact same mount/visualize path as a
-      // user-dropped file.
-      const SAMPLE_TILES_URL = 'data/bunny_tiles.bin';
-      const SAMPLE_SF_URL = 'data/bunny_shape.bin';
+      // Bundled samples (tiles + shape factors) so the viewer can be tried with one
+      // click, with no files of your own on hand. Fetched as plain static assets —
+      // `data/` sits next to this page both when served locally (see README) and
+      // once deployed to GitHub Pages — and wrapped as File objects so they flow
+      // through the exact same mount/visualize path as a user-dropped file.
+      const SAMPLES = {
+        bunny: { tiles: 'data/bunny_tiles.bin', sf: 'data/bunny_shape.bin', label: 'Bunny' },
+        teapot: { tiles: 'data/teapot_tiles.bin', sf: 'data/teapot_shape.bin', label: 'Teapot' },
+      };
 
       async function fetchAsFile(url, name) {
         const res = await fetch(url);
@@ -566,22 +576,23 @@
         return new File([blob], name);
       }
 
-      window.preloadSample = async function () {
-        const btn = document.getElementById('btn-preload');
+      window.preloadSample = async function (kind) {
+        const sample = SAMPLES[kind];
+        const btn = document.getElementById('btn-preload-' + kind);
         const prevLabel = btn.textContent;
         btn.disabled = true;
-        btn.textContent = 'Loading sample data…';
+        btn.textContent = 'Loading…';
         errBanner.style.display = 'none';
         try {
           const [tiles, sf] = await Promise.all([
-            fetchAsFile(SAMPLE_TILES_URL, 'bunny_tiles.bin'),
-            fetchAsFile(SAMPLE_SF_URL, 'bunny_shape.bin'),
+            fetchAsFile(sample.tiles, kind + '_tiles.bin'),
+            fetchAsFile(sample.sf, kind + '_shape.bin'),
           ]);
           setTilesFile(tiles);
           setSfFile(sf);
           await window.runVisualize();
         } catch (err) {
-          showError('Could not load sample data: ' + (err.message || err));
+          showError(`Could not load ${sample.label} sample data: ` + (err.message || err));
         } finally {
           btn.disabled = false;
           btn.textContent = prevLabel;
