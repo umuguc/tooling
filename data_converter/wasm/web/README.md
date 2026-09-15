@@ -1,4 +1,4 @@
-# HDF5 Web Tools
+# HDF5 Converter
 
 A browser-based tool for exploring HDF5 files and converting between the HDF5
 format and the UMUGUC binary grid format — no upload to a server, no install.

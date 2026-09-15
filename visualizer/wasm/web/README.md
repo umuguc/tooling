@@ -1,8 +1,7 @@
 # Grid Visualizer (Web)
 
 An in-browser 3D viewer for the binary grid point-cloud format (`tiles.bin` /
-`sf.bin`) — no upload to a server, no install. Everything runs client-side;
-your files never leave your machine.
+`sf.bin`). It's a static page — no server component, nothing to install.
 
 ## Running it
 
@@ -49,6 +48,5 @@ point clouds load without freezing the tab or running out of memory.
 
 ## Notes
 
-* Nothing is uploaded anywhere — all processing happens in your browser.
-* Closing the tab discards everything; there's no autosave or session
-  persistence.
+* All processing happens in your browser — files never get sent anywhere.
+* Closing the tab throws everything away. There's no autosave.

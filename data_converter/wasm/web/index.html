@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<title>HDF5 Web Tools</title>
+<title>HDF5 Converter</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{
@@ -244,7 +244,7 @@ h1 span{color:#3fb950}
 </head>
 <body>
 
-<a class="back-link" href="../">← HDF5 Tools</a>
+<a class="back-link" href="../">← UMUGUC Tools</a>
 
 <div id="wasm-loading">
   <div class="spinner"></div>
@@ -253,10 +253,9 @@ h1 span{color:#3fb950}
 
 <!-- ── Upload screen ──────────────────────────────────────────────────────── -->
 <div id="upload-screen" style="display:none">
-  <h1>HDF5 <span>Web</span> Tools</h1>
+  <h1>HDF5 <span>Converter</span></h1>
   <p class="subtitle">
-    Explore the structure of HDF5 files or convert datasets to the binary grid format —
-    everything runs in the browser, your file never leaves your machine.
+    Explore the structure of HDF5 files or convert datasets to the binary grid format.
   </p>
 
   <div id="drop-zone">
@@ -631,7 +630,7 @@ if (location.protocol === 'file:') {
     '<code style="display:inline-block;margin-top:8px;padding:6px 10px;background:#161b22;border-radius:6px">python3 -m http.server 8000</code><br><br>' +
     'then open <code>http://localhost:8000/</code>.' +
     '</div>';
-  throw new Error('HDF5 Web Tools cannot run from a file:// URL — serve wasm/web/ over HTTP instead.');
+  throw new Error('HDF5 Converter cannot run from a file:// URL — serve wasm/web/ over HTTP instead.');
 }
 
 const worker = new Worker('explorer-worker.js');
